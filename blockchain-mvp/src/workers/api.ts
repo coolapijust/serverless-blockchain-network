@@ -87,10 +87,21 @@ export default {
         return handleQueryTransaction(txHash, env, requestId);
       }
 
-      // 查询账户
+      // 查询账户交易历史 [NEW]
+      if (path.startsWith('/account/') && path.endsWith('/txs') && request.method === 'GET') {
+        const parts = path.split('/'); // /account/:address/txs
+        const address = parts[2];
+        return handleQueryAccountTransactions(address, env, requestId);
+      }
+
+      // 查询账户 (Fallback if matches /account/:address only)
       if (path.startsWith('/account/') && request.method === 'GET') {
-        const address = path.split('/')[2];
-        return handleQueryAccount(address, env, requestId);
+        // Ensure strictly /account/:address
+        const parts = path.split('/');
+        if (parts.length === 3) {
+          const address = parts[2];
+          return handleQueryAccount(address, env, requestId);
+        }
       }
 
       // 查询区块
@@ -641,6 +652,38 @@ async function queryAccount(
   };
 }
 
+// [NEW] Query Account Transactions Handler
+async function handleQueryAccountTransactions(
+  address: string,
+  env: ApiEnv,
+  requestId: string
+): Promise<Response> {
+  const doId = env.CONSENSUS_COORDINATOR.idFromName('consensus-coordinator');
+  const doStub = env.CONSENSUS_COORDINATOR.get(doId);
+
+  try {
+    const response = await doStub.fetch(`http://do/account/${address}/txs`);
+    if (!response.ok) {
+      throw new Error(`DO failed: ${response.status}`);
+    }
+    const data = await response.json() as { transactions: TransactionReceipt[] };
+
+    // Convert BigInts in transactions for JSON response (though global replacer handles it, we might want to be explicit)
+    // The global jsonResponse replacer handles BigInts, so we just pass data.
+    return jsonResponse({
+      success: true,
+      data: data.transactions,
+      requestId
+    });
+  } catch (e: any) {
+    return jsonResponse({
+      success: false,
+      error: e.message,
+      requestId
+    }, 500);
+  }
+}
+
 async function getPendingNonce(doStub: DurableObjectStub, address: Address): Promise<number> {
   // 查询 Pending Queue 中该地址的交易
   const response = await doStub.fetch('http://do/internal/queue', {
@@ -777,7 +820,7 @@ async function triggerProposer(env: ApiEnv): Promise<{ triggered: boolean; error
 // ============================================
 
 function jsonResponse(data: unknown, status: number = 200): Response {
-  return new Response(JSON.stringify(data), {
+  return new Response(JSON.stringify(data, (_, v) => typeof v === 'bigint' ? v.toString() : v), {
     status,
     headers: {
       'Content-Type': 'application/json',

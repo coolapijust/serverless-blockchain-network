@@ -162,6 +162,14 @@ curl -X POST https://api.your-domain.com/admin/genesis \
 3. Node.js 18+
 4. 域名（可选，用于自定义域名）
 
+### 重要提示：新人部署必读
+
+直接 Clone 代码后无法直接部署，必须修改以下配置才能成功运行：
+
+1.  **KV Namespace ID**: `wrangler.toml` 中的 `id` 本项目私有。你必须创建自己的 KV 数据库并替换 ID。
+2.  **Worker 子域名**: 将配置文件中所有的 `lovelylove.workers.dev` 替换为你自己的 Worker 子域名（通常是 `your-project.your-subdomain.workers.dev`）。
+3.  **密钥安全**: 虽然测试网可以直接写在配置文件中，但**生产环境**请务必使用 Secrets！
+
 ### 步骤1：克隆并初始化项目
 
 ```bash
@@ -279,25 +287,32 @@ wrangler kv:namespace create "CONFIG_KV" --preview
 # 记录输出的 id，更新 wrangler.toml 中的 id 和 preview_id
 ```
 
-### 步骤5：配置 Secrets
+### 步骤5：配置 Secrets (推荐安全做法)
+
+**强烈建议**不要将私钥硬编码在 `wrangler.toml` 中（除非是本地测试环境）。请使用 `wrangler secret` 命令将私钥加密存储在 Cloudflare 环境变量中。
 
 ```bash
-# Proposer 私钥
+# 1. Proposer 私钥
+# 对应 wrangler.toml 中的 PROPOSER_PRIVATE_KEY
 wrangler secret put PROPOSER_PRIVATE_KEY --env proposer
-# 输入: 0x0123456789abcdef...
+# 提示输入时，粘贴步骤2生成的 Proposer 私钥 (0x...)
 
-# Validator 1 私钥
+# 2. Validator 1 私钥
+# 对应 wrangler.toml 中的 VALIDATOR_PRIVATE_KEY
 wrangler secret put VALIDATOR_PRIVATE_KEY --env validator1
-# 输入: 0xfedcba9876543210...
+# 提示输入时，粘贴步骤2生成的 Validator 1 私钥
 
-# Validator 2 私钥
+# 3. Validator 2 私钥
+# 对应 wrangler.toml 中的 VALIDATOR_PRIVATE_KEY
 wrangler secret put VALIDATOR_PRIVATE_KEY --env validator2
-# 输入: 0xaabbccdd11223344...
+# 提示输入时，粘贴步骤2生成的 Validator 2 私钥
 
-# Admin 密钥（用于后台管理）
+# 4. Admin 密钥（用于后台管理接口鉴权）
 wrangler secret put ADMIN_API_KEY --env production
-# 输入: 随机生成的强密码
+# 提示输入时，设置一个复杂的密码
 ```
+
+> **注意**: 设置了 Secret 后，`wrangler.toml` 中的对应 `vars` 变量会被覆盖，你可以安全地从配置文件中删除这些明文私钥。
 
 ### 步骤6：部署 Workers
 
@@ -383,7 +398,7 @@ wrangler route add validator1.your-domain.com/* --script blockchain-mvp-validato
 wrangler route add validator2.your-domain.com/* --script blockchain-mvp-validator2
 
 # 配置 DNS
-# 在 Cloudflare Dashboard 中添加 CNAME 记录指向 your-worker.your-subdomain.workers.dev
+# 在 Cloudflare Workers中指向 你自己的域名
 ```
 
 ---

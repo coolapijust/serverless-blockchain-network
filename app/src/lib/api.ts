@@ -13,15 +13,8 @@ import type {
   Address,
 } from '@/types';
 
-// 硬编码生产环境 API 地址，确保连接无误
-const API_BASE_URL = 'https://blockchain-mvp.lovelylove.workers.dev';
-
-interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: string;
-  requestId: string;
-}
+// 从环境变量获取 API 地址，如果未设置则使用默认值
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://blockchain-mvp.lovelylove.workers.dev';
 
 class ApiClient {
   private baseUrl: string;
@@ -44,13 +37,16 @@ class ApiClient {
       throw new Error(error || `HTTP ${response.status}`);
     }
 
-    const result = await response.json() as ApiResponse<T>;
+    const result = await response.json();
 
-    if (!result.success) {
+    // Handle error responses
+    if (result.success === false) {
       throw new Error(result.error || 'API request failed');
     }
 
-    return result.data as T;
+    // If response has a 'data' field, unwrap it; otherwise return the whole result
+    // This handles both ApiResponse<T> format and direct response format
+    return (result.data !== undefined ? result.data : result) as T;
   }
 
   // ==================== Network ====================
@@ -73,12 +69,25 @@ class ApiClient {
   }
 
   async getBlock(height: number): Promise<Block> {
-    const result = await this.fetch<any>(`/block/${height}`);
-    // Backend returns BlockQueryResponse { block: Block, confirmations: number }
-    if (result && result.block) {
-      return result.block;
+    try {
+      console.log(`[API] Fetching block ${height}...`);
+      const result = await this.fetch<any>(`/block/${height}`);
+      console.log(`[API] getBlock(${height}) raw result:`, JSON.stringify(result).substring(0, 200));
+      console.log(`[API] getBlock(${height}) has block?`, !!result?.block);
+      console.log(`[API] getBlock(${height}) has header?`, !!result?.block?.header);
+
+      // Backend returns BlockQueryResponse { block: Block, lightBlock, confirmations }
+      if (result && result.block && result.block.header) {
+        console.log(`[API] Returning block ${height} successfully`);
+        return result.block;
+      }
+
+      console.error(`[API] Block data structure invalid:`, result);
+      throw new Error('Block data not found or invalid in response');
+    } catch (e) {
+      console.error(`[API] getBlock(${height}) failed:`, e);
+      throw e;
     }
-    throw new Error('Block data not found in response');
   }
 
   async getBlocks(page: number = 1, limit: number = 20): Promise<Block[]> {
@@ -111,7 +120,18 @@ class ApiClient {
 
   // ==================== Transactions ====================
   async getTransaction(txHash: HexString): Promise<Transaction> {
-    return this.fetch(`/tx/${txHash}`);
+    const result = await this.fetch<any>(`/tx/${txHash}`);
+    // Backend returns TransactionReceipt { transaction: Transaction, status, blockHeight... }
+    if (result && result.transaction) {
+      return {
+        ...result.transaction,
+        status: result.status,
+        blockHeight: result.blockHeight,
+        blockHash: result.blockHash,
+        confirmationTime: result.confirmationTime,
+      };
+    }
+    return result; // Fallback
   }
 
   async submitTransaction(tx: {
@@ -119,21 +139,42 @@ class ApiClient {
     to: Address;
     amount: string;
     nonce: number;
+    timestamp: number; // Accept timestamp from caller
     signature: string;
     publicKey: string;
   }): Promise<{ txHash: string; estimatedConfirmationTime: number }> {
     return this.fetch('/tx/submit', {
       method: 'POST',
-      body: JSON.stringify({
-        ...tx,
-        timestamp: Date.now(),
-      }),
+      body: JSON.stringify(tx), // Use provided timestamp
     });
   }
 
   // ==================== Accounts ====================
   async getAccount(address: Address): Promise<Account> {
     return this.fetch(`/account/${address}`);
+  }
+
+  async getAccountTransactions(address: Address): Promise<Transaction[]> {
+    const txs = await this.fetch<Transaction[]>(`/account/${address}/txs`);
+    // Backend returns TransactionReceipt[], verify and map if needed
+    // But since we fixed the backend to return `data` as the array, fetch returns `T`.
+    // However, the items are Receipts (nested). We need to flatten them similar to getTransaction.
+
+    // Actually, let's check the backend response. `handleQueryAccountTransactions` returns `data: data.transactions`
+    // where elements are `TransactionReceipt`.
+    // We should flatten them here for easier consumption in UI.
+    return (txs as any[]).map((r: any) => {
+      if (r.transaction) {
+        return {
+          ...r.transaction,
+          status: r.status,
+          blockHeight: r.blockHeight,
+          blockHash: r.blockHash,
+          confirmationTime: r.confirmationTime,
+        };
+      }
+      return r; // Should not happen with current backend
+    });
   }
 
   // ==================== Faucet ====================

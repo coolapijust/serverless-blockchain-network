@@ -4,7 +4,8 @@
  * ============================================
  */
 
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Wallet as WalletIcon,
   Copy,
@@ -14,7 +15,8 @@ import {
   Key,
   AlertTriangle,
   Download,
-  Check
+  Check,
+  ArrowRightLeft
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -28,6 +30,7 @@ import { useTranslation } from '@/contexts/I18nContext';
 import { api } from '@/lib/api';
 import { shortenAddress, formatAmount, signTransaction } from '@/lib/crypto';
 import { toast } from 'sonner';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 
 function SendDialog() {
@@ -37,13 +40,27 @@ function SendDialog() {
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Simple fee estimation (MVP: 0 or minimal)
+  const ESTIMATED_FEE = 0.0001;
+
+  const handleMax = () => {
+    if (!wallet) return;
+    try {
+      const balance = parseFloat(formatAmount(wallet.balance));
+      const maxAmount = Math.max(0, balance - ESTIMATED_FEE);
+      setAmount(maxAmount.toString());
+    } catch (e) {
+      console.error("Max calc failed", e);
+    }
+  };
+
   const handleSend = async (e: FormEvent) => {
     e.preventDefault();
     if (!wallet) return;
 
     setLoading(true);
     try {
-      const amountInWei = BigInt(parseFloat(amount) * 1e18).toString();
+      const amountInWei = BigInt(Math.floor(parseFloat(amount) * 1e18)).toString();
       const nonce = wallet.nonce;
       const timestamp = Date.now();
 
@@ -60,11 +77,14 @@ function SendDialog() {
         to,
         amount: amountInWei,
         nonce,
+        timestamp, // CRITICAL: Must match the timestamp used for signing
         signature,
         publicKey: wallet.publicKey,
       });
 
       toast.success(`${t('wallet.sendDialog.success')}! Hash: ${response.txHash}`);
+      setAmount('');
+      setTo('');
     } catch (error) {
       toast.error(`${t('wallet.sendDialog.error')}: ` + (error instanceof Error ? error.message : String(error)));
     } finally {
@@ -85,7 +105,7 @@ function SendDialog() {
           <DialogTitle>{t('wallet.sendDialog.title')}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSend} className="space-y-4">
-          <div>
+          <div className="space-y-2">
             <Label>{t('wallet.sendDialog.to')}</Label>
             <Input
               value={to}
@@ -93,8 +113,14 @@ function SendDialog() {
               placeholder="0x..."
             />
           </div>
-          <div>
-            <Label>{t('wallet.sendDialog.amount')}</Label>
+          <div className="space-y-2">
+            <div className="flex justify-between">
+              <Label>{t('wallet.sendDialog.amount')}</Label>
+              <div className="text-xs text-muted-foreground">
+                {t('wallet.balance')}: {wallet ? formatAmount(wallet.balance) : '0'} CF
+              </div>
+            </div>
+
             <div className="flex gap-2">
               <Input
                 type="number"
@@ -102,11 +128,17 @@ function SendDialog() {
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="0.00"
+                className="flex-1"
               />
-              <span className="flex items-center text-sm text-muted-foreground">CF</span>
+              <Button type="button" variant="outline" onClick={handleMax}>
+                {t('wallet.sendDialog.max')}
+              </Button>
             </div>
+            <p className="text-xs text-muted-foreground flex justify-between">
+              <span>{t('wallet.sendDialog.fee')}: ~{ESTIMATED_FEE} CF</span>
+            </p>
           </div>
-          <Button type="submit" className="w-full" disabled={loading}>
+          <Button type="submit" className="w-full" disabled={loading || !amount || !to}>
             {loading ? t('wallet.sendDialog.sending') : t('wallet.send')}
           </Button>
         </form>
@@ -203,14 +235,14 @@ function GenerateSuccessDialog({
 
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label>Wallet Address</Label>
+            <Label>{t('wallet.address')}</Label>
             <div className="p-3 bg-muted rounded-md font-mono text-xs break-all">
               {wallet.address}
             </div>
           </div>
 
           <div className="space-y-2">
-            <Label className="text-red-500 font-bold">Private Key (SECRET)</Label>
+            <Label className="text-red-500 font-bold">{t('wallet.privateKeySecret')}</Label>
             <div className="relative">
               <div className="p-3 bg-muted rounded-md font-mono text-xs break-all pr-10">
                 {wallet.privateKey}
@@ -229,18 +261,18 @@ function GenerateSuccessDialog({
           <div className="flex gap-2">
             <Button onClick={handleCopy} variant="outline" className="flex-1">
               <Copy className="h-4 w-4 mr-2" />
-              Copy Key
+              {t('wallet.copyKey')}
             </Button>
             <Button onClick={handleDownload} variant="outline" className="flex-1">
               <Download className="h-4 w-4 mr-2" />
-              Download JSON
+              {t('wallet.downloadBackup')}
             </Button>
           </div>
         </div>
 
         <div className="flex justify-end">
           <Button onClick={() => onOpenChange(false)} variant="default" className="w-full">
-            I have saved my key
+            {t('wallet.saveKeyBtn')}
           </Button>
         </div>
       </DialogContent>
@@ -265,9 +297,9 @@ function AccountsDialog({ open, onOpenChange }: AccountsDialogProps) {
       await connect(newKey);
       setNewKey('');
       setIsAdding(false);
-      toast.success('Account imported');
+      toast.success(t('wallet.importSuccess'));
     } catch (e) {
-      toast.error('Import failed');
+      toast.error(t('wallet.importFailed'));
     }
   };
 
@@ -275,10 +307,10 @@ function AccountsDialog({ open, onOpenChange }: AccountsDialogProps) {
     try {
       const w = await generateWallet(); // Returns wallet object
       await connect(w.privateKey); // Add to context
-      toast.success('New wallet generated');
+      toast.success(t('wallet.generateSuccess'));
       setIsAdding(false);
     } catch (e) {
-      toast.error('Generation failed');
+      toast.error(t('wallet.importFailed'));
     }
   };
 
@@ -287,7 +319,7 @@ function AccountsDialog({ open, onOpenChange }: AccountsDialogProps) {
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>{t('wallet.title')}</DialogTitle>
-          <DialogDescription>Manage your accounts</DialogDescription>
+          <DialogDescription>{t('wallet.manage')}</DialogDescription>
         </DialogHeader>
 
         {!isAdding ? (
@@ -301,9 +333,9 @@ function AccountsDialog({ open, onOpenChange }: AccountsDialogProps) {
                   </div>
                   <div className="flex gap-2">
                     {activeWallet?.address === w.address ? (
-                      <Button size="sm" variant="ghost" disabled><Check className="h-4 w-4 mr-1" /> Active</Button>
+                      <Button size="sm" variant="ghost" disabled><Check className="h-4 w-4 mr-1" /> {t('common.active')}</Button>
                     ) : (
-                      <Button size="sm" variant="outline" onClick={() => switchAccount(w.address)}>Switch</Button>
+                      <Button size="sm" variant="outline" onClick={() => switchAccount(w.address)}>{t('common.switch')}</Button>
                     )}
                     <Button size="icon" variant="ghost" className="text-destructive" onClick={() => removeAccount(w.address)}>
                       <AlertTriangle className="h-4 w-4" />
@@ -313,24 +345,83 @@ function AccountsDialog({ open, onOpenChange }: AccountsDialogProps) {
               ))}
             </div>
             <Button className="w-full" variant="outline" onClick={() => setIsAdding(true)}>
-              <Key className="h-4 w-4 mr-2" /> Add Account
+              <Key className="h-4 w-4 mr-2" /> {t('wallet.addAccount')}
             </Button>
           </div>
         ) : (
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Private Key</Label>
+              <Label>{t('wallet.privateKey')}</Label>
               <Input value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="0x..." />
             </div>
             <div className="flex gap-2">
-              <Button className="flex-1" onClick={handleImport}>Import</Button>
-              <Button className="flex-1" variant="outline" onClick={handleGenerate}>Generate New</Button>
+              <Button className="flex-1" onClick={handleImport}>{t('common.import')}</Button>
+              <Button className="flex-1" variant="outline" onClick={handleGenerate}>{t('common.generate')}</Button>
             </div>
-            <Button variant="ghost" className="w-full" onClick={() => setIsAdding(false)}>Cancel</Button>
+            <Button variant="ghost" className="w-full" onClick={() => setIsAdding(false)}>{t('common.cancel')}</Button>
           </div>
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// [NEW] Component for rendering transaction history list
+function TransactionHistoryContent({ transactions, loading }: { transactions: any[], loading: boolean }) {
+  const { t } = useTranslation();
+  const { wallet } = useWallet();
+
+  if (loading) {
+    return <div className="text-center py-8 text-muted-foreground">{t('common.loading')}</div>;
+  }
+
+  if (transactions.length === 0) {
+    return (
+      <div className="text-center py-8 border rounded-lg bg-muted/50 border-dashed">
+        <History className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+        <p className="text-sm text-muted-foreground">{t('common.noData')}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {transactions.map((tx) => (
+        <Link key={tx.hash} to={`/tx/${tx.hash}`}>
+          <div className="p-3 border rounded-lg flex items-center justify-between hover:bg-accent transition-colors cursor-pointer">
+            <div className="flex items-center gap-3">
+              <div className={`p-2 rounded-full ${tx.from === wallet?.address ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-600'}`}>
+                {tx.from === wallet?.address ? <ArrowRightLeft className="h-4 w-4" /> : <ArrowRightLeft className="h-4 w-4 rotate-180" />}
+              </div>
+              <div>
+                <div className="font-medium text-sm">
+                  {tx.from === wallet?.address ? t('wallet.sent') : t('wallet.received')}
+                </div>
+                <div className="text-xs text-muted-foreground font-mono">
+                  {new Date(tx.timestamp).toLocaleString()}
+                </div>
+              </div>
+            </div>
+            <div className="text-right">
+              <div className={`font-bold ${tx.from === wallet?.address ? 'text-foreground' : 'text-green-600'}`}>
+                {tx.from === wallet?.address ? '-' : '+'}{formatAmount(tx.amount)} CF
+              </div>
+              <div className="text-xs text-muted-foreground capitalize">
+                {tx.status || t('explorer.status.confirmed')}
+              </div>
+            </div>
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function TransactionHistory(props: { transactions: any[], loading: boolean }) {
+  return (
+    <ErrorBoundary>
+      <TransactionHistoryContent {...props} />
+    </ErrorBoundary>
   );
 }
 
@@ -341,7 +432,39 @@ export default function Wallet() {
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [showAccounts, setShowAccounts] = useState(false);
 
-  // ... (handleConnect, handleGenerate Logic) ...
+  // History State
+  const [history, setHistory] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // Load history on mount or wallet change
+  useEffect(() => {
+    if (wallet?.address) {
+      loadHistory(wallet.address);
+    }
+  }, [wallet?.address]);
+
+  async function loadHistory(address: string) {
+    setLoadingHistory(true);
+    try {
+      console.log(`[Wallet] Fetching history for ${address}...`);
+      const txs = await api.getAccountTransactions(address);
+      console.log(`[Wallet] Received history:`, txs);
+
+      if (Array.isArray(txs)) {
+        setHistory(txs);
+      } else {
+        console.error("[Wallet] History is not an array:", txs);
+        setHistory([]);
+      }
+    } catch (e) {
+      console.error('[Wallet] Failed to load history:', e);
+      setHistory([]);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }
+
+  // ... (handleConnect, etc. implementation unchanged) ...
   const [newWallet, setNewWallet] = useState<{ address: string; privateKey: string; publicKey: string } | null>(null);
 
   const handleConnect = async (e: React.FormEvent) => {
@@ -357,20 +480,18 @@ export default function Wallet() {
     try {
       const wallet = await generateWallet();
       setNewWallet(wallet);
-      // Auto connect generated one? User might want to save it first.
-      // Current logic: Just shows dialog.
     } catch (error) {
-      console.error('Wallet generation failed:', error);
-      toast.error('Failed to generate wallet: ' + (error instanceof Error ? error.message : String(error)));
+      toast.error('Failed to generate wallet');
     }
   };
-
+  // ...
 
   if (!isConnected) {
+    // ... Login Screen ...
     return (
-      // ... Login Screen ... (No changes needed, actually I replaced the whole component, so I must include it)
       <div className="min-h-screen flex items-center justify-center bg-background text-foreground transition-colors duration-300">
         <Card className="w-full max-w-md">
+          {/* Same login rendering */}
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <WalletIcon className="h-6 w-6" />
@@ -425,8 +546,6 @@ export default function Wallet() {
             </Button>
           </CardContent>
         </Card>
-
-        {/* Success Dialog for Login Screen */}
         <GenerateSuccessDialog
           wallet={newWallet}
           open={!!newWallet}
@@ -511,6 +630,9 @@ export default function Wallet() {
                 <CardTitle className="flex items-center gap-2">
                   <History className="h-5 w-5" />
                   {t('wallet.history')}
+                  <Button variant="ghost" size="sm" onClick={() => loadHistory(wallet!.address)} disabled={loadingHistory} className="ml-auto">
+                    Refresh
+                  </Button>
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -522,7 +644,13 @@ export default function Wallet() {
                   </TabsList>
 
                   <TabsContent value="all" className="space-y-2">
-                    <p className="text-center py-8 text-muted-foreground">{t('common.noData')}</p>
+                    <TransactionHistory transactions={history} loading={loadingHistory} />
+                  </TabsContent>
+                  <TabsContent value="sent" className="space-y-2">
+                    <TransactionHistory transactions={history.filter(tx => tx.from === wallet?.address)} loading={loadingHistory} />
+                  </TabsContent>
+                  <TabsContent value="received" className="space-y-2">
+                    <TransactionHistory transactions={history.filter(tx => tx.to === wallet?.address)} loading={loadingHistory} />
                   </TabsContent>
                 </Tabs>
               </CardContent>

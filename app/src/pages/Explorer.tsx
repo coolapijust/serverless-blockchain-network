@@ -4,7 +4,8 @@
  * ============================================
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Search,
   Box,
@@ -23,7 +24,7 @@ import { api } from '@/lib/api';
 import { shortenAddress, formatAmount, timeAgo } from '@/lib/crypto';
 import type { Block, Transaction, NetworkStatus } from '@/types';
 
-function StatCard({
+const StatCard = memo(function StatCard({
   title,
   value,
   subtitle,
@@ -50,9 +51,9 @@ function StatCard({
       </CardContent>
     </Card>
   );
-}
+});
 
-function BlockCard({ block }: { block: Block }) {
+const BlockCard = memo(function BlockCard({ block }: { block: Block }) {
   const { t } = useTranslation();
   return (
     <Card className="hover:shadow-md transition-shadow">
@@ -77,9 +78,9 @@ function BlockCard({ block }: { block: Block }) {
       </CardContent>
     </Card>
   );
-}
+});
 
-function TransactionCard({ tx }: { tx: Transaction }) {
+const TransactionCard = memo(function TransactionCard({ tx }: { tx: Transaction }) {
   const { t } = useTranslation();
   const statusColors = {
     pending: 'bg-yellow-500',
@@ -99,32 +100,36 @@ function TransactionCard({ tx }: { tx: Transaction }) {
     <Card className="hover:shadow-md transition-shadow">
       <CardContent className="p-4">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
               <ArrowRightLeft className="h-5 w-5 text-primary" />
             </div>
-            <div>
-              <p className="font-medium">{shortenAddress(tx.hash)}</p>
-              <p className="text-sm text-muted-foreground">
-                {shortenAddress(tx.from)} → {shortenAddress(tx.to)}
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-sm truncate">{shortenAddress(tx.hash)}</span>
+                <Badge variant="outline" className="text-[10px] h-4">
+                  <div className={`h-1.5 w-1.5 rounded-full mr-1 ${statusColors[tx.status]}`} />
+                  {statusLabels[tx.status]}
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {t('common.from')}: {shortenAddress(tx.from)}
               </p>
             </div>
           </div>
           <div className="text-right">
-            <div className="flex items-center gap-2">
-              <div className={`h-2 w-2 rounded-full ${statusColors[tx.status]}`} />
-              <span className="text-sm">{statusLabels[tx.status] || tx.status}</span>
-            </div>
-            <p className="text-sm font-medium mt-1">{formatAmount(tx.amount)} CF</p>
+            <p className="font-bold text-sm">{formatAmount(tx.amount)} CF</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{timeAgo(tx.timestamp)}</p>
           </div>
         </div>
       </CardContent>
     </Card>
   );
-}
+});
 
 export default function Explorer() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
   const [networkStatus, setNetworkStatus] = useState<NetworkStatus | null>(null);
   const [latestBlocks, setLatestBlocks] = useState<Block[]>([]);
@@ -132,8 +137,9 @@ export default function Explorer() {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 5000);
-    return () => clearInterval(interval);
+    // Temporarily disabled auto-refresh to debug infinite loop issue
+    // const interval = setInterval(loadData, 5000);
+    // return () => clearInterval(interval);
   }, []);
 
   async function loadData() {
@@ -160,12 +166,12 @@ export default function Explorer() {
 
     if (query.startsWith('0x')) {
       if (query.length === 66) {
-        window.location.href = `/tx/${query}`;
+        navigate(`/tx/${query}`);
       } else if (query.length === 42) {
-        window.location.href = `/address/${query}`;
+        navigate(`/address/${query}`);
       }
     } else if (/^\d+$/.test(query)) {
-      window.location.href = `/block/${query}`;
+      navigate(`/block/${query}`);
     }
   }
 
@@ -230,7 +236,7 @@ export default function Explorer() {
           <StatCard
             title={t('wallet.nonce')}
             value={networkStatus?.pendingTransactions?.toString() || '0'}
-            subtitle="Pending"
+            subtitle={t('explorer.status.pending')}
             icon={Clock}
           />
           <StatCard
@@ -259,9 +265,9 @@ export default function Explorer() {
             ) : (
               <div className="space-y-2">
                 {latestBlocks.filter(b => b?.header?.height !== undefined).map((block) => (
-                  <a key={block.hash} href={`/block/${block?.header?.height}`}>
+                  <Link key={block.hash} to={`/block/${block.header.height}`}>
                     <BlockCard block={block} />
-                  </a>
+                  </Link>
                 ))}
               </div>
             )}
@@ -282,9 +288,9 @@ export default function Explorer() {
                   .flatMap(b => b.transactions)
                   .slice(0, 20)
                   .map((tx) => (
-                    <a key={tx.hash} href={`/tx/${tx.hash}`}>
+                    <Link key={tx.hash} to={`/tx/${tx.hash}`}>
                       <TransactionCard tx={tx} />
-                    </a>
+                    </Link>
                   ))}
               </div>
             )}

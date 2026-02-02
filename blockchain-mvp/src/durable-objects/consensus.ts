@@ -696,6 +696,53 @@ export class ConsensusCoordinator {
   }
 
   /**
+   * 查询账户交易历史 [NEW]
+   * 遍历区块历史和 Pending Queue (MVP 简化实现)
+   */
+  async getTransactionsByAddress(address: Address): Promise<TransactionReceipt[]> {
+    const stored = await this.state.storage.get<ConsensusCoordinatorState>('state');
+    const blockHistory = stored?.blockHistory || {};
+    const queue = stored?.pendingQueue || createInitialPendingQueue();
+    const cleanAddr = address.toLowerCase();
+
+    const history: TransactionReceipt[] = [];
+
+    // 1. 遍历区块历史 (倒序: 最新的在前)
+    // 注意：这将随着区块增加而变慢，生产环境需要专门的索引
+    const sortedHeights = Object.keys(blockHistory).map(Number).sort((a, b) => b - a);
+
+    for (const height of sortedHeights) {
+      const block = blockHistory[height];
+      for (const tx of block.transactions) {
+        if (tx.from === cleanAddr || tx.to === cleanAddr) {
+          history.push({
+            transaction: tx,
+            status: TransactionStatus.CONFIRMED,
+            blockHeight: block.header.height,
+            blockHash: block.hash,
+            confirmationTime: block.header.timestamp,
+          });
+        }
+      }
+    }
+
+    // 2. 遍历 Pending Queue
+    for (const tx of queue.transactions) {
+      if (tx.from === cleanAddr || tx.to === cleanAddr) {
+        // 避免重复 (理论上 Pending 不会在 History 中，但 defensive 一点)
+        if (!history.find(h => h.transaction.hash === tx.hash)) {
+          history.unshift({ // Pending 的放最前面
+            transaction: tx,
+            status: queue.processing ? TransactionStatus.PROCESSING : TransactionStatus.PENDING,
+          });
+        }
+      }
+    }
+
+    return history;
+  }
+
+  /**
    * 查询区块
    */
   async queryBlock(height: number): Promise<BlockQueryResponse> {
@@ -886,6 +933,14 @@ export class ConsensusCoordinator {
       if (path === '/state' && request.method === 'GET') {
         const state = await this.queryState();
         return safeJsonResponse(state);
+      }
+
+      // 查询账户交易历史 [NEW]
+      if (path.startsWith('/account/') && path.endsWith('/txs') && request.method === 'GET') {
+        const parts = path.split('/'); // /account/:address/txs
+        const address = parts[2];
+        const history = await this.getTransactionsByAddress(address);
+        return safeJsonResponse({ transactions: history });
       }
 
       // 查询账户

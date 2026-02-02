@@ -4,14 +4,15 @@
  * ============================================
  */
 
-import { useState } from 'react';
-import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { useState, lazy, Suspense } from 'react';
+import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import {
   Blocks,
   ArrowRightLeft,
   Shield,
   Wallet as WalletIcon,
-  Menu
+  Menu,
+  Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -21,11 +22,27 @@ import { WalletProvider } from '@/contexts/WalletContext';
 import { LanguageToggle } from '@/components/LanguageToggle';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Toaster } from 'sonner';
-import Explorer from '@/pages/Explorer';
-import Exchange from '@/pages/Exchange';
-import Admin from '@/pages/Admin';
-import Wallet from '@/pages/Wallet';
+
+// Lazy load pages for performance
+const Explorer = lazy(() => import('@/pages/Explorer'));
+const Exchange = lazy(() => import('@/pages/Exchange'));
+const Admin = lazy(() => import('@/pages/Admin'));
+const Wallet = lazy(() => import('@/pages/Wallet'));
+const BlockDetail = lazy(() => import('@/pages/BlockDetail'));
+const TransactionDetail = lazy(() => import('@/pages/TransactionDetail'));
+const AddressDetail = lazy(() => import('@/pages/AddressDetail'));
+
 import { Component, type ReactNode } from 'react';
+
+// Loading Fallback Component
+function PageLoader() {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+      <Loader2 className="h-10 w-10 animate-spin text-primary" />
+      <p className="text-sm text-muted-foreground animate-pulse">Loading experience...</p>
+    </div>
+  );
+}
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
   constructor(props: { children: ReactNode }) {
@@ -59,6 +76,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 function Navigation() {
   const [isOpen, setIsOpen] = useState(false);
   const { t } = useTranslation();
+  const location = useLocation();
 
   const navItems = [
     { path: '/', label: t('nav.explorer'), icon: Blocks },
@@ -71,16 +89,15 @@ function Navigation() {
     <nav className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
-          {/* Logo */}
           <Link to="/" className="flex items-center gap-2">
             <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
               <Blocks className="h-5 w-5 text-primary-foreground" />
             </div>
             <span className="font-bold text-lg hidden sm:inline">{t('common.appName')}</span>
+            <span className="hidden lg:inline text-[9px] bg-red-100 text-red-600 px-1 rounded ml-1 font-mono">v1.0.1-ui</span>
           </Link>
 
           <div className="flex items-center gap-2">
-            {/* Desktop Navigation */}
             <div className="hidden md:flex items-center gap-1 mr-4">
               {navItems.map((item) => (
                 <Link key={item.path} to={item.path}>
@@ -96,8 +113,7 @@ function Navigation() {
               <LanguageToggle />
               <ThemeToggle />
 
-              {/* Mobile Navigation */}
-              <Sheet open={isOpen} onOpenChange={setIsOpen}>
+              <Sheet open={isOpen} onOpenChange={setIsOpening => setIsOpen(setIsOpening)}>
                 <SheetTrigger asChild className="md:hidden">
                   <Button variant="ghost" size="icon">
                     <Menu className="h-5 w-5" />
@@ -118,6 +134,9 @@ function Navigation() {
                       </Link>
                     ))}
                   </div>
+                  <div className="mt-auto p-4 border-t text-[10px] font-mono text-muted-foreground">
+                    Debug: {location.pathname} | v1.0.1-ui
+                  </div>
                 </SheetContent>
               </Sheet>
             </div>
@@ -125,6 +144,20 @@ function Navigation() {
         </div>
       </div>
     </nav>
+  );
+}
+
+function NotFoundDebugger() {
+  const location = useLocation();
+  console.error(`[Router] No match for path: "${location.pathname}"`);
+  return (
+    <div className="container mx-auto px-4 py-8 text-center">
+      <h1 className="text-2xl font-bold mb-2">Page Not Found</h1>
+      <p className="text-muted-foreground mb-4">The route "{location.pathname}" does not exist.</p>
+      <Link to="/">
+        <Button>Go Back Home</Button>
+      </Link>
+    </div>
   );
 }
 
@@ -138,12 +171,18 @@ function App() {
             <ErrorBoundary>
               <div className="min-h-screen bg-background transition-colors duration-300">
                 <Navigation />
-                <Routes>
-                  <Route path="/" element={<Explorer />} />
-                  <Route path="/exchange" element={<Exchange />} />
-                  <Route path="/wallet" element={<Wallet />} />
-                  <Route path="/admin" element={<Admin />} />
-                </Routes>
+                <Suspense fallback={<PageLoader />}>
+                  <Routes>
+                    <Route path="/" element={<Explorer />} />
+                    <Route path="/exchange" element={<Exchange />} />
+                    <Route path="/wallet" element={<Wallet />} />
+                    <Route path="/admin" element={<Admin />} />
+                    <Route path="/block/:height" element={<BlockDetail />} />
+                    <Route path="/tx/:hash" element={<TransactionDetail />} />
+                    <Route path="/address/:address" element={<AddressDetail />} />
+                    <Route path="*" element={<NotFoundDebugger />} />
+                  </Routes>
+                </Suspense>
               </div>
             </ErrorBoundary>
           </BrowserRouter>
