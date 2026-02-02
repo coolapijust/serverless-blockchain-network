@@ -4,7 +4,7 @@
  * ============================================
  */
 
-import { useState, lazy, Suspense } from 'react';
+import { useState, lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import {
   Blocks,
@@ -34,15 +34,16 @@ const AddressDetail = lazy(() => import('@/pages/AddressDetail'));
 
 import { Component, type ReactNode } from 'react';
 
-// Loading Fallback Component
-function PageLoader() {
-  return (
-    <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
-      <Loader2 className="h-10 w-10 animate-spin text-primary" />
-      <p className="text-sm text-muted-foreground animate-pulse">Loading experience...</p>
-    </div>
-  );
-}
+// NProgress
+import nprogress from 'nprogress';
+import 'nprogress/nprogress.css';
+
+// Configure NProgress
+nprogress.configure({
+  showSpinner: false,
+  minimum: 0.1,
+  speed: 400
+});
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
   constructor(props: { children: ReactNode }) {
@@ -73,10 +74,70 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   }
 }
 
+// Helper to preload components (Simple Cache)
+const preloaded = new Set<string>();
+const preloadMap: Record<string, () => Promise<any>> = {
+  '/': () => import('@/pages/Explorer'),
+  '/exchange': () => import('@/pages/Exchange'),
+  '/wallet': () => import('@/pages/Wallet'),
+  '/admin': () => import('@/pages/Admin'),
+};
+
+function RouteTransition() {
+  const location = useLocation();
+
+  useEffect(() => {
+    // Finish progress bar on location change
+    nprogress.done();
+    return () => {
+      // Start progress bar on unmount (start of next navigation)
+      // Actually, we need to detect START of navigation.
+      // In legacy router, we can't easily detect "click" before lazy load starts.
+      // But we can ensure it finishes.
+    };
+  }, [location]);
+
+  return null;
+}
+
+// Fallback that triggers NProgress
+function PageLoader() {
+  useEffect(() => {
+    nprogress.start();
+    return () => {
+      nprogress.done();
+    };
+  }, []);
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+      <Loader2 className="h-10 w-10 animate-spin text-primary" />
+      <p className="text-sm text-muted-foreground animate-pulse">Loading experience...</p>
+    </div>
+  );
+}
+
 function Navigation() {
   const [isOpen, setIsOpen] = useState(false);
   const { t } = useTranslation();
   const location = useLocation();
+
+  const handleMouseEnter = (path: string) => {
+    // Optimization: Only preload if not already loaded
+    if (!preloaded.has(path) && preloadMap[path]) {
+      // Debounce/Delay slightly to avoid spamming network on fast hover
+      // But for now, just checking 'preloaded' Set avoids repeat calls
+      console.log(`[Perf] Preloading ${path}...`);
+      preloadMap[path]();
+      preloaded.add(path);
+    }
+  };
+
+  const handleClick = () => {
+    // Immediate feedback on click
+    nprogress.start();
+    setIsOpen(false);
+  };
 
   const navItems = [
     { path: '/', label: t('nav.explorer'), icon: Blocks },
@@ -87,21 +148,32 @@ function Navigation() {
 
   return (
     <nav className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
+      <RouteTransition />
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
-          <Link to="/" className="flex items-center gap-2">
+          <Link
+            to="/"
+            className="flex items-center gap-2"
+            onMouseEnter={() => handleMouseEnter('/')}
+            onClick={handleClick}
+          >
             <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
               <Blocks className="h-5 w-5 text-primary-foreground" />
             </div>
             <span className="font-bold text-lg hidden sm:inline">{t('common.appName')}</span>
-            <span className="hidden lg:inline text-[9px] bg-red-100 text-red-600 px-1 rounded ml-1 font-mono">v1.0.1-ui</span>
+            <span className="hidden lg:inline text-[9px] bg-red-100 text-red-600 px-1 rounded ml-1 font-mono">v1.0.2-perf</span>
           </Link>
 
           <div className="flex items-center gap-2">
             <div className="hidden md:flex items-center gap-1 mr-4">
               {navItems.map((item) => (
-                <Link key={item.path} to={item.path}>
-                  <Button variant="ghost" size="sm" className="gap-2">
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  onMouseEnter={() => handleMouseEnter(item.path)}
+                  onClick={() => nprogress.start()} // Explicit start
+                >
+                  <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground hover:text-foreground">
                     <item.icon className="h-4 w-4" />
                     {item.label}
                   </Button>
@@ -125,7 +197,7 @@ function Navigation() {
                       <Link
                         key={item.path}
                         to={item.path}
-                        onClick={() => setIsOpen(false)}
+                        onClick={handleClick}
                       >
                         <Button variant="ghost" className="w-full justify-start gap-2">
                           <item.icon className="h-4 w-4" />
@@ -135,7 +207,7 @@ function Navigation() {
                     ))}
                   </div>
                   <div className="mt-auto p-4 border-t text-[10px] font-mono text-muted-foreground">
-                    Debug: {location.pathname} | v1.0.1-ui
+                    Debug: {location.pathname} | v1.0.2-perf
                   </div>
                 </SheetContent>
               </Sheet>

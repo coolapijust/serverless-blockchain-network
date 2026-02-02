@@ -211,12 +211,23 @@ export class ConsensusCoordinator {
   /**
    * 初始化创世状态
    */
-  async initGenesis(): Promise<{ success: boolean; error?: string }> {
+  async initGenesis(genesisTime?: number, force: boolean = false): Promise<{ success: boolean; error?: string }> {
     try {
       console.log('[ConsensusCoordinator] Initializing genesis...');
 
-      const genesisBlock = await generateGenesisBlock(DEFAULT_GENESIS_CONFIG);
-      const initialState = generateInitialWorldState(DEFAULT_GENESIS_CONFIG);
+      // 安全检查：如果区块高度已经大于 0，禁止普通重置。除非显式使用 force 参数。
+      if (this.worldState && this.worldState.latestBlockHeight > 0 && !force) {
+        console.warn('[ConsensusCoordinator] Block height > 0, initialization rejected without force.');
+        return { success: false, error: 'Blockchain already initialized. Use force=true to override.' };
+      }
+
+      const config = {
+        ...DEFAULT_GENESIS_CONFIG,
+        genesisTime: genesisTime || DEFAULT_GENESIS_CONFIG.genesisTime
+      };
+
+      const genesisBlock = await generateGenesisBlock(config);
+      const initialState = generateInitialWorldState(config);
 
       console.log('[ConsensusCoordinator] Genesis InitialState Auditing:', {
         premineCount: DEFAULT_GENESIS_CONFIG.premine.length,
@@ -743,6 +754,28 @@ export class ConsensusCoordinator {
   }
 
   /**
+   * 批量查询区块
+   */
+  async queryBlocksRange(start: number, limit: number): Promise<Block[]> {
+    const stored = await this.state.storage.get<ConsensusCoordinatorState>('state');
+    const blockHistory = stored?.blockHistory || {};
+
+    const blocks: Block[] = [];
+    // 确保从 start 开始向下取 limit 个区块
+    // 如果 start 为 100, limit 为 10，则取 100, 99, ..., 91
+    const end = Math.max(0, start - limit + 1);
+
+    for (let h = start; h >= end; h--) {
+      const block = blockHistory[h];
+      if (block) {
+        blocks.push(block);
+      }
+    }
+
+    return blocks;
+  }
+
+  /**
    * 查询区块
    */
   async queryBlock(height: number): Promise<BlockQueryResponse> {
@@ -898,7 +931,8 @@ export class ConsensusCoordinator {
 
       // 处理初始化请求
       if (url.pathname === '/internal/init-genesis' && request.method === 'POST') {
-        const result = await this.initGenesis();
+        const body = await request.json().catch(() => ({})) as { genesisTime?: number; force?: boolean };
+        const result = await this.initGenesis(body.genesisTime, body.force);
         return new Response(JSON.stringify(result), {
           headers: { 'Content-Type': 'application/json' }
         });
@@ -952,6 +986,14 @@ export class ConsensusCoordinator {
           balance: account.balance.toString(),
           nonce: account.nonce,
         });
+      }
+
+      // 批量查询区块
+      if (path === '/blocks' && request.method === 'GET') {
+        const start = parseInt(url.searchParams.get('start') || '0');
+        const limit = parseInt(url.searchParams.get('limit') || '10');
+        const blocks = await this.queryBlocksRange(start, limit);
+        return safeJsonResponse({ blocks });
       }
 
       // 查询区块

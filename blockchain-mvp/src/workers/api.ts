@@ -115,6 +115,13 @@ export default {
         return handleQueryLatestBlock(env, requestId);
       }
 
+      // 批量查询区块
+      if (path === '/blocks' && request.method === 'GET') {
+        const start = url.searchParams.get('start');
+        const limit = url.searchParams.get('limit');
+        return handleQueryBlocks(start, limit, env, requestId);
+      }
+
       // 创世初始化 (Admin)
       if (path === '/admin/init-genesis' && request.method === 'POST') {
         return handleInitGenesis(request, env, requestId);
@@ -401,6 +408,34 @@ async function handleQueryLatestBlock(
   return jsonResponse({
     success: true,
     data: latest,
+    requestId,
+  });
+}
+
+async function handleQueryBlocks(
+  startParam: string | null,
+  limitParam: string | null,
+  env: ApiEnv,
+  requestId: string
+): Promise<Response> {
+  const doId = env.CONSENSUS_COORDINATOR.idFromName('consensus-coordinator');
+  const doStub = env.CONSENSUS_COORDINATOR.get(doId);
+
+  // If start is not provided, fetch latest status to find latest height
+  let start = startParam ? parseInt(startParam) : -1;
+  const limit = limitParam ? parseInt(limitParam) : 10;
+
+  if (start === -1) {
+    const latestBlock = await queryLatestBlock(doStub);
+    start = latestBlock.height;
+  }
+
+  const response = await doStub.fetch(`http://do/blocks?start=${start}&limit=${limit}`);
+  const result = await response.json() as { blocks: any[] };
+
+  return jsonResponse({
+    success: true,
+    data: result.blocks,
     requestId,
   });
 }
@@ -847,12 +882,18 @@ async function handleInitGenesis(
   requestId: string
 ): Promise<Response> {
   try {
+    const body = await request.json().catch(() => ({})) as { force?: boolean };
     const id = env.CONSENSUS_COORDINATOR.idFromName('consensus-coordinator');
     const stub = env.CONSENSUS_COORDINATOR.get(id);
 
     // 调用 DO 的初始化接口
     const response = await stub.fetch('http://do/internal/init-genesis', {
       method: 'POST',
+      body: JSON.stringify({
+        genesisTime: Date.now(),
+        force: body.force === true
+      }),
+      headers: { 'Content-Type': 'application/json' }
     });
 
     const result = await response.json();

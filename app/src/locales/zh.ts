@@ -23,6 +23,7 @@ export const zh = {
         generate: "生成",
         close: "关闭",
         save: "保存",
+        switchAccount: "切换账户",
     },
     nav: {
         explorer: "浏览器",
@@ -92,6 +93,10 @@ export const zh = {
             max: "最大",
             fee: "预估手续费",
         },
+        transactions: "交易总数",
+        network: "网络",
+        pendingNonce: "等待确认",
+        enter: "进入钱包",
     },
     exchange: {
         title: "去中心化交易所",
@@ -139,5 +144,16 @@ export const zh = {
         overview: "账户概览",
         balance: "当前余额",
         transactions: "历史交易记录",
+    },
+    tracker: {
+        title: "交易追踪",
+        description: "实时监控共识状态",
+        step1: { title: "广播中", desc: "正在写入待处理队列" },
+        step2: { title: "共识中", desc: "Proposer & Validators 投票" },
+        step3: { title: "确认中", desc: "正在提交至区块" },
+        step4: { title: "已确认", desc: "交易已上链" },
+        waitingValidators: "等待 2/3 节点签名...",
+        viewDetail: "查看交易详情",
+        failed: "交易失败",
     },
 };

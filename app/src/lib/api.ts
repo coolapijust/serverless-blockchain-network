@@ -95,26 +95,38 @@ class ApiClient {
       const status = await this.getNetworkStatus();
       if (!status || status.latestBlockHeight === undefined) return [];
 
-      const blocks: Block[] = [];
       const startHeight = Math.max(0, status.latestBlockHeight - (page - 1) * limit);
-      const endHeight = Math.max(-1, startHeight - limit);
 
-      for (let i = startHeight; i > endHeight; i--) {
-        try {
-          const block = await this.getBlock(i);
-          if (block && block.header) {
-            blocks.push(block);
-          }
-        } catch (e) {
-          console.warn(`Failed to fetch block ${i}:`, e);
-          // Continue to next block instead of breaking entirely
-        }
+      console.log(`[API] Fetching batch blocks starting from ${startHeight}, limit ${limit}...`);
+
+      const blocks = await this.fetch<Block[]>(`/blocks?start=${startHeight}&limit=${limit}`);
+
+      if (Array.isArray(blocks)) {
+        return blocks;
       }
 
-      return blocks;
-    } catch (e) {
-      console.error('getBlocks failed:', e);
       return [];
+    } catch (e) {
+      console.error('getBlocks batch fetch failed, falling back to sequential:', e);
+      // Fallback to sequential if batch fails for some reason
+      try {
+        const status = await this.getNetworkStatus();
+        const startHeight = Math.max(0, status.latestBlockHeight - (page - 1) * limit);
+        const endHeight = Math.max(-1, startHeight - limit);
+        const blocks: Block[] = [];
+        for (let i = startHeight; i > endHeight; i--) {
+          try {
+            const block = await this.getBlock(i);
+            if (block) blocks.push(block);
+          } catch (err) {
+            console.warn(`Failed to fetch block ${i}:`, err);
+          }
+        }
+        return blocks;
+      } catch (innerError) {
+        console.error('Sequential fallback also failed:', innerError);
+        return [];
+      }
     }
   }
 
@@ -186,9 +198,10 @@ class ApiClient {
   }
 
   // ==================== Admin ====================
-  async initGenesis(): Promise<{ success: boolean; data?: any; error?: string }> {
+  async initGenesis(force: boolean = false): Promise<{ success: boolean; data?: any; error?: string }> {
     return this.fetch('/admin/init-genesis', {
       method: 'POST',
+      body: JSON.stringify({ force }),
     });
   }
 }

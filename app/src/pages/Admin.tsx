@@ -91,6 +91,7 @@ export default function Admin() {
     averageBlockTime: 0,
     networkHealth: 'healthy',
   });
+  const [rawNetworkStatus, setRawNetworkStatus] = useState<any>(null);
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -106,6 +107,7 @@ export default function Admin() {
             averageBlockTime: 2.5, // Mocked for now
             networkHealth: netStatus.lastError ? 'degraded' : 'healthy',
           });
+          setRawNetworkStatus(netStatus);
         }
       } catch (error) {
         console.error('Failed to fetch stats:', error);
@@ -125,12 +127,19 @@ export default function Admin() {
     }
   };
 
+  const [isForce, setIsForce] = useState(false);
+
   const handleInitGenesis = async () => {
-    if (!confirm(t('admin.initDesc'))) return;
+    const confirmMsg = isForce
+      ? "⚠️ WARNING: You are performing a FORCE RESET. This will permanently DELETE all current data and re-initialize the genesis block with the current time. Continue?"
+      : t('admin.initDesc');
+
+    if (!confirm(confirmMsg)) return;
     try {
-      const res = await api.initGenesis();
+      const res = await api.initGenesis(isForce);
       if (res.success) {
         toast.success('Genesis initialized successfully!');
+        setIsForce(false);
       } else {
         toast.error('Failed: ' + res.error);
       }
@@ -233,7 +242,83 @@ export default function Admin() {
                 {t('admin.status')}
               </Button>
             </div>
-            {/* ... Validator list */}
+
+            <Card>
+              <CardContent className="p-0">
+                <div className="rounded-md border">
+                  <div className="grid grid-cols-12 gap-4 p-4 border-b bg-muted/50 font-medium text-sm">
+                    <div className="col-span-8">Validator Public Key</div>
+                    <div className="col-span-4 text-right">Status</div>
+                  </div>
+                  {rawNetworkStatus?.validators && rawNetworkStatus.validators.length > 0 ? (
+                    <div className="divide-y">
+                      {rawNetworkStatus.validators.map((pubKey: string, index: number) => (
+                        <div key={index} className="grid grid-cols-12 gap-4 p-4 text-sm items-center hover:bg-muted/30 transition-colors">
+                          <div className="col-span-8 font-mono truncate" title={pubKey}>
+                            {pubKey}
+                          </div>
+                          <div className="col-span-4 text-right">
+                            <span className="inline-flex items-center rounded-full bg-green-100 dark:bg-green-900 px-2.5 py-0.5 text-xs font-medium text-green-800 dark:text-green-200">
+                              Active
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-8 text-center text-muted-foreground">
+                      No active validators found.
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="network" className="space-y-4">
+            <h2 className="text-xl font-semibold">Network Details</h2>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium">Chain Configuration</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Chain ID</span>
+                    <span className="font-mono">{rawNetworkStatus?.chainId || 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Network ID</span>
+                    <span className="font-mono">{rawNetworkStatus?.networkId || 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Consensus</span>
+                    <span>PoA (Ed25519)</span>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium">Current Status</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Latest Block Hash</span>
+                    <span className="font-mono text-xs truncate w-32" title={rawNetworkStatus?.latestBlockHash}>
+                      {rawNetworkStatus?.latestBlockHash || 'N/A'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Pending Txs</span>
+                    <span>{rawNetworkStatus?.pendingTransactions || 0}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Last Updated</span>
+                    <span>{rawNetworkStatus?.lastUpdated ? new Date(rawNetworkStatus.lastUpdated).toLocaleTimeString() : 'N/A'}</span>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           <TabsContent value="settings" className="space-y-4">
@@ -250,8 +335,31 @@ export default function Admin() {
                   <p className="text-sm text-red-700 dark:text-red-300 mt-1 mb-3">
                     {t('admin.initDesc')}
                   </p>
-                  <Button variant="destructive" onClick={handleInitGenesis}>
-                    {t('admin.initGenesis')}
+                  <div className="flex items-center space-x-2 mb-4">
+                    <input
+                      type="checkbox"
+                      id="force-reset"
+                      checked={isForce}
+                      onChange={(e) => setIsForce(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                    />
+                    <label htmlFor="force-reset" className="text-sm font-medium text-red-600 cursor-pointer">
+                      Enable Force Reset (Override Security Lock)
+                    </label>
+                  </div>
+                  <Button
+                    variant={(stats.totalBlocks > 0 && !isForce) ? "outline" : "destructive"}
+                    onClick={handleInitGenesis}
+                    disabled={stats.totalBlocks > 0 && !isForce}
+                  >
+                    {(stats.totalBlocks > 0 && !isForce) ? (
+                      <span className="flex items-center gap-2 text-muted-foreground">
+                        <CheckCircle className="h-4 w-4 text-green-500" />
+                        Network Live & Locked
+                      </span>
+                    ) : (
+                      isForce ? "FORCE INITIALIZE GENESIS" : t('admin.initGenesis')
+                    )}
                   </Button>
                 </div>
               </CardContent>

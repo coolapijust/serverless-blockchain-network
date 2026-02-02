@@ -4,7 +4,7 @@
  * ============================================
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { CandlestickChart } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -86,6 +86,85 @@ function PriceChart() {
 }
 
 
+// Helper Component for History
+function TradeHistory({ walletAddress }: { walletAddress?: string }) {
+  const { t } = useTranslation();
+  const [history, setHistory] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!walletAddress) return;
+
+    const fetchHistory = async () => {
+      setLoading(true);
+      try {
+        // Fetch all transactions for this account
+        const txs = await api.getAccountTransactions(walletAddress);
+
+        // Filter and map to trade history format
+        const trades = txs.map(tx => {
+          // Parse direction and type
+          // Buy: From Faucet or Type=Call (if we had it). Here simpler: Not to 0x0...0
+          // Sell: To 0x0000000000000000000000000000000000000000
+
+          // Actually, "Buy" in this demo is Request Faucet. "Sell" is Send to Burn.
+          const isSell = tx.to === '0x0000000000000000000000000000000000000000';
+          const type = isSell ? 'sell' : 'buy';
+
+          return {
+            hash: tx.hash,
+            price: '1.25', // Mock price for history as we don't store historical price on chain yet
+            amount: (BigInt(tx.amount) / 1000000000000000000n).toString(),
+            time: tx.timestamp,
+            type,
+            status: tx.status
+          };
+        });
+
+        // Sort by time desc
+        trades.sort((a, b) => b.time - a.time);
+        setHistory(trades);
+      } catch (e) {
+        console.error("Failed to fetch history", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchHistory();
+    // Poll every 5s
+    const interval = setInterval(fetchHistory, 5000);
+    return () => clearInterval(interval);
+  }, [walletAddress]);
+
+  if (!walletAddress) return <p className="text-center py-8 text-muted-foreground">{t('exchange.connectWallet')}</p>;
+  if (loading && history.length === 0) return <p className="text-center py-8 text-muted-foreground">{t('common.loading')}</p>;
+  if (history.length === 0) return <p className="text-center py-8 text-muted-foreground">{t('common.noData')}</p>;
+
+  return (
+    <div className="space-y-4 max-h-[400px] overflow-y-auto">
+      {history.map((trade) => (
+        <div key={trade.hash} className="flex justify-between items-center p-3 border rounded hover:bg-muted/50 transition-colors">
+          <div>
+            <div className={`text-sm font-bold capitalize ${trade.type === 'buy' ? 'text-green-500' : 'text-red-500'}`}>
+              {t(`exchange.${trade.type}`)}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {new Date(trade.time).toLocaleTimeString()}
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-sm font-medium">{trade.amount} CF</div>
+            <div className="text-xs text-muted-foreground">
+              {trade.status}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TradingForm({ type }: { type: 'buy' | 'sell' }) {
   const { wallet, isConnected, refreshBalance } = useWallet();
   const { t } = useTranslation();
@@ -124,13 +203,15 @@ function TradingForm({ type }: { type: 'buy' | 'sell' }) {
         if (!amount || isNaN(Number(amount))) throw new Error(t('common.invalidAmount') || 'Invalid amount');
 
         // Fetch nonce
-        let nonce = 1;
+        let nonce = 0;
         try {
           const account = await api.getAccount(wallet.address);
-          nonce = account.nonce + 1;
+          // FIX: Backend expects strict equality (nonce === currentNonce).
+          // Do NOT add 1 here.
+          nonce = account.nonce;
         } catch {
           // Account might not exist yet
-          nonce = 1;
+          nonce = 0;
         }
 
         const value = (BigInt(Math.floor(Number(amount))) * 1000000000000000000n).toString();
@@ -216,6 +297,7 @@ function TradingForm({ type }: { type: 'buy' | 'sell' }) {
 
 export default function Exchange() {
   const { t } = useTranslation();
+  const { wallet } = useWallet(); // Get wallet for history
   const [activeTab, setActiveTab] = useState('buy');
 
   return (
@@ -255,7 +337,7 @@ export default function Exchange() {
             <Card>
               <CardHeader><CardTitle>{t('exchange.tradeHistory')}</CardTitle></CardHeader>
               <CardContent>
-                <p className="text-center py-8 text-muted-foreground">{t('common.noData')}</p>
+                <TradeHistory walletAddress={wallet?.address} />
               </CardContent>
             </Card>
           </div>

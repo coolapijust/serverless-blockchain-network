@@ -265,7 +265,11 @@ export default function Explorer() {
             ) : (
               <div className="space-y-2">
                 {latestBlocks.filter(b => b?.header?.height !== undefined).map((block) => (
-                  <Link key={block.hash} to={`/block/${block.header.height}`}>
+                  <Link
+                    key={block.hash}
+                    to={`/block/${block.header.height}`}
+                    onMouseEnter={() => import('@/pages/BlockDetail')}
+                  >
                     <BlockCard block={block} />
                   </Link>
                 ))}
@@ -288,7 +292,11 @@ export default function Explorer() {
                   .flatMap(b => b.transactions)
                   .slice(0, 20)
                   .map((tx) => (
-                    <Link key={tx.hash} to={`/tx/${tx.hash}`}>
+                    <Link
+                      key={tx.hash}
+                      to={`/tx/${tx.hash}`}
+                      onMouseEnter={() => import('@/pages/TransactionDetail')}
+                    >
                       <TransactionCard tx={tx} />
                     </Link>
                   ))}

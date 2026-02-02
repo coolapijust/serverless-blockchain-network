@@ -16,7 +16,8 @@ import {
   AlertTriangle,
   Download,
   Check,
-  ArrowRightLeft
+  ArrowRightLeft,
+  LogOut
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -191,11 +192,13 @@ function ReceiveDialog({ address }: { address: string }) {
 function GenerateSuccessDialog({
   wallet,
   open,
-  onOpenChange
+  onOpenChange,
+  onConnect
 }: {
   wallet: { address: string; privateKey: string; publicKey: string } | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onConnect?: (privateKey: string) => void;
 }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
@@ -229,7 +232,7 @@ function GenerateSuccessDialog({
             {t('wallet.generateSuccess')}
           </DialogTitle>
           <DialogDescription>
-            IMPORTANT: Save your private key now. You cannot recover it later!
+            {t('wallet.generateDesc')}
           </DialogDescription>
         </DialogHeader>
 
@@ -270,10 +273,16 @@ function GenerateSuccessDialog({
           </div>
         </div>
 
-        <div className="flex justify-end">
-          <Button onClick={() => onOpenChange(false)} variant="default" className="w-full">
+        <div className="flex justify-end gap-2">
+          <Button onClick={() => onOpenChange(false)} variant="outline">
             {t('wallet.saveKeyBtn')}
           </Button>
+          {onConnect && (
+            <Button onClick={() => onConnect(wallet.privateKey)} variant="default" className="flex-1">
+              <WalletIcon className="h-4 w-4 mr-2" />
+              {t('wallet.enter')}
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>
@@ -292,6 +301,9 @@ function AccountsDialog({ open, onOpenChange }: AccountsDialogProps) {
   const [isAdding, setIsAdding] = useState(false);
   const [newKey, setNewKey] = useState('');
 
+  // State for newly generated wallet within dialog
+  const [generatedWallet, setGeneratedWallet] = useState<{ address: string; privateKey: string; publicKey: string } | null>(null);
+
   const handleImport = async () => {
     try {
       await connect(newKey);
@@ -306,63 +318,81 @@ function AccountsDialog({ open, onOpenChange }: AccountsDialogProps) {
   const handleGenerate = async () => {
     try {
       const w = await generateWallet(); // Returns wallet object
-      await connect(w.privateKey); // Add to context
-      toast.success(t('wallet.generateSuccess'));
-      setIsAdding(false);
+      // Do NOT connect immediately. Show success dialog first.
+      setGeneratedWallet(w);
+      // setIsAdding(false); // Keep adding mode or switch? Actually we show the success dialog ON TOP or inline.
+      // Let's use the local 'generatedWallet' state to trigger the success dialog.
     } catch (e) {
       toast.error(t('wallet.importFailed'));
     }
   };
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>{t('wallet.title')}</DialogTitle>
-          <DialogDescription>{t('wallet.manage')}</DialogDescription>
-        </DialogHeader>
+  const handleConnectGenerated = async (pk: string) => {
+    await connect(pk);
+    setGeneratedWallet(null);
+    setIsAdding(false);
+    toast.success("Account added");
+  };
 
-        {!isAdding ? (
-          <div className="space-y-4">
-            <div className="space-y-2 max-h-[300px] overflow-y-auto">
-              {wallets.map(w => (
-                <div key={w.address} className={`p-3 rounded-lg border flex items-center justify-between ${activeWallet?.address === w.address ? 'bg-primary/5 border-primary' : 'bg-card'}`}>
-                  <div className="flex flex-col overflow-hidden">
-                    <span className="font-mono text-sm truncate w-[180px]">{shortenAddress(w.address)}</span>
-                    <span className="text-xs text-muted-foreground">{formatAmount(w.balance)} CF</span>
+  return (
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('wallet.title')}</DialogTitle>
+            <DialogDescription>{t('wallet.manage')}</DialogDescription>
+          </DialogHeader>
+
+          {!isAdding ? (
+            <div className="space-y-4">
+              <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                {wallets.map(w => (
+                  <div key={w.address} className={`p-3 rounded-lg border flex items-center justify-between ${activeWallet?.address === w.address ? 'bg-primary/5 border-primary' : 'bg-card'}`}>
+                    <div className="flex flex-col overflow-hidden">
+                      <span className="font-mono text-sm truncate w-[180px]">{shortenAddress(w.address)}</span>
+                      <span className="text-xs text-muted-foreground">{formatAmount(w.balance)} CF</span>
+                    </div>
+                    <div className="flex gap-2">
+                      {activeWallet?.address === w.address ? (
+                        <Button size="sm" variant="ghost" disabled><Check className="h-4 w-4 mr-1" /> {t('common.active')}</Button>
+                      ) : (
+                        <Button size="sm" variant="outline" onClick={() => switchAccount(w.address)}>{t('common.switch')}</Button>
+                      )}
+                      <Button size="icon" variant="ghost" className="text-destructive" onClick={() => removeAccount(w.address)}>
+                        <AlertTriangle className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    {activeWallet?.address === w.address ? (
-                      <Button size="sm" variant="ghost" disabled><Check className="h-4 w-4 mr-1" /> {t('common.active')}</Button>
-                    ) : (
-                      <Button size="sm" variant="outline" onClick={() => switchAccount(w.address)}>{t('common.switch')}</Button>
-                    )}
-                    <Button size="icon" variant="ghost" className="text-destructive" onClick={() => removeAccount(w.address)}>
-                      <AlertTriangle className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
+              <Button className="w-full" variant="outline" onClick={() => setIsAdding(true)}>
+                <Key className="h-4 w-4 mr-2" /> {t('wallet.addAccount')}
+              </Button>
             </div>
-            <Button className="w-full" variant="outline" onClick={() => setIsAdding(true)}>
-              <Key className="h-4 w-4 mr-2" /> {t('wallet.addAccount')}
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>{t('wallet.privateKey')}</Label>
-              <Input value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="0x..." />
+          ) : (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>{t('wallet.privateKey')}</Label>
+                <Input value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="0x..." />
+              </div>
+              <div className="flex gap-2">
+                <Button className="flex-1" onClick={handleImport}>{t('common.import')}</Button>
+                <Button className="flex-1" variant="outline" onClick={handleGenerate}>{t('common.generate')}</Button>
+              </div>
+              <Button variant="ghost" className="w-full" onClick={() => setIsAdding(false)}>{t('common.cancel')}</Button>
             </div>
-            <div className="flex gap-2">
-              <Button className="flex-1" onClick={handleImport}>{t('common.import')}</Button>
-              <Button className="flex-1" variant="outline" onClick={handleGenerate}>{t('common.generate')}</Button>
-            </div>
-            <Button variant="ghost" className="w-full" onClick={() => setIsAdding(false)}>{t('common.cancel')}</Button>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Success Dialog for "Add Account" generation */}
+      <GenerateSuccessDialog
+        wallet={generatedWallet}
+        open={!!generatedWallet}
+        onOpenChange={(open) => !open && setGeneratedWallet(null)}
+        onConnect={handleConnectGenerated}
+      />
+    </>
   );
 }
 
@@ -583,10 +613,16 @@ export default function Wallet() {
             </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => setShowAccounts(true)}>
-                Switch Account
+                {t('common.switchAccount')}
               </Button>
-              <Button variant="ghost" onClick={disconnect} className="text-xs text-muted-foreground">
-                Lock
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={disconnect}
+                className="text-foreground border-destructive/50 hover:bg-destructive/10 hover:text-destructive hover:border-destructive transition-colors"
+                title={t('wallet.disconnect')}
+              >
+                <LogOut className="h-4 w-4" />
               </Button>
             </div>
           </div>
@@ -615,10 +651,29 @@ export default function Wallet() {
               <CardHeader>
                 <CardTitle className="text-sm">{t('wallet.accountInfo')}</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2">
-                <div className="flex justify-between">
+              <CardContent className="space-y-3">
+                <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">{t('wallet.nonce')}</span>
-                  <span className="font-medium">{wallet!.nonce}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono">{wallet!.nonce}</span>
+                    {wallet!.pendingNonce !== undefined && wallet!.pendingNonce > wallet!.nonce && (
+                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
+                        {t('wallet.pendingNonce')}: {wallet!.pendingNonce}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-muted-foreground">{t('wallet.transactions')}</span>
+                  <span className="font-mono">{history.length}</span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-muted-foreground">{t('wallet.network')}</span>
+                  <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                    Testnet
+                  </span>
                 </div>
               </CardContent>
             </Card>
@@ -662,6 +717,10 @@ export default function Wallet() {
         wallet={newWallet}
         open={!!newWallet}
         onOpenChange={(open) => !open && setNewWallet(null)}
+        onConnect={async (pk) => {
+          await connect(pk);
+          setNewWallet(null);
+        }}
       />
       <AccountsDialog open={showAccounts} onOpenChange={setShowAccounts} />
     </div>

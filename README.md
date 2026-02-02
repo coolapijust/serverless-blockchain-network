@@ -70,12 +70,21 @@ npm run build
 npx wrangler pages deploy dist --project-name serverless-blockchain-frontend
 ```
 
-### 4. 初始化区块链
+### 4. 初始化与管理 (Genesis Management)
 
-在首次部署后，需要通过 API 初始化创世区块：
+区块链在部署后需要进行创世初始化。为了确保账本安全，项目实现了**不可篡改创世 (Immutable Genesis)** 逻辑：
 
+- **普通初始化**: 首次部署后，通过 Admin 面板或 API 触发。创世块将自动记录当前服务器时间作为 `genesisTime`。
+- **安全锁定**: 一旦区块高度 > 0，系统将自动锁定初始化接口，禁止任何重置操作。
+- **强制重置 (Force Reset)**: 在极端维护情况下，Admin 可以通过管理面板勾选 "Force Reset" 选项来绕过锁定并重新初始化链（将清除所有数据）。
+
+可以通过管理面板执行操作：
+`https://your-frontend-url.pages.dev/admin` (默认密码: `admin123`)
+
+或使用 curl (需带 force 标志)：
 ```bash
-curl -X POST https://your-worker-url.workers.dev/admin/init-genesis
+# 首次初始化
+curl -X POST https://your-worker-url.workers.dev/admin/init-genesis -H "Content-Type: application/json" -d '{"force": false}'
 ```
 
 ## 开发与调试

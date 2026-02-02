@@ -14,6 +14,7 @@ interface Wallet {
   privateKey: string;
   balance: string;
   nonce: number;
+  pendingNonce?: number;
 }
 
 // LocalStorage Keys
@@ -109,7 +110,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const refreshWalletBalance = async (w: Wallet): Promise<Wallet> => {
     try {
       const account = await api.getAccount(w.address);
-      return { ...w, balance: account.balance, nonce: account.nonce };
+      return { ...w, balance: account.balance, nonce: account.nonce, pendingNonce: account.pendingNonce };
     } catch {
       return w;
     }
