@@ -1,0 +1,237 @@
+# ============================================
+# Cloudflare Serverless Blockchain MVP
+# Event-Driven BFT Consensus with Durable Objects
+# ============================================
+
+name = "blockchain-mvp"
+main = "src/workers/api.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ============================================
+# Durable Objects Binding
+# ConsensusCoordinator - 强一致性状态管理
+# ============================================
+[[durable_objects.bindings]]
+name = "CONSENSUS_COORDINATOR"
+class_name = "ConsensusCoordinator"
+
+# ============================================
+# Durable Objects Class Definition
+# ============================================
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ConsensusCoordinator"]
+
+# ============================================
+# KV Namespace - 仅用于配置存储
+# 严禁用于 Pending Queue（最终一致会导致双花）
+# ============================================
+[[kv_namespaces]]
+binding = "CONFIG_KV"
+id = "ba135706ad834c35b9f37c4d33416d39"
+
+# ============================================
+# Environment Variables
+# ============================================
+[vars]
+# 网络配置
+NETWORK_ID = "cloudflare-mvp-testnet"
+CHAIN_ID = "1337"
+
+# 共识参数
+BLOCK_MAX_TXS = "20"
+BLOCK_MIN_TXS = "1"
+CONSENSUS_TIMEOUT_MS = "3000"
+ALARM_TIMEOUT_MS = "300000"
+
+# 节点标识 & 密钥
+PROPOSER_URL = "https://blockchain-mvp-proposer.lovelylove.workers.dev"
+VALIDATOR_1_URL = "https://blockchain-mvp-validator1.lovelylove.workers.dev"
+VALIDATOR_2_URL = "https://blockchain-mvp-validator2.lovelylove.workers.dev"
+FAUCET_KEY = "0x80600bdc83df0a633693fa8babd17a99e3006c71a7b9c706ea33c9f80ed11133"
+
+# Service Bindings (API -> Proposer)
+[[services]]
+binding = "PROPOSER_SERVICE"
+service = "blockchain-mvp-proposer"
+# Secrets（通过 wrangler secret put 设置）
+# PROPOSER_PRIVATE_KEY - Proposer Ed25519 私钥 (hex)
+# VALIDATOR_1_PRIVATE_KEY - Validator 1 私钥
+# VALIDATOR_2_PRIVATE_KEY - Validator 2 私钥
+# ============================================
+
+# ============================================
+# 多 Worker 配置
+# ============================================
+
+# Proposer Worker - 区块提议者
+[env.proposer]
+name = "blockchain-mvp-proposer"
+main = "src/workers/proposer.ts"
+migrations = []
+
+[[env.proposer.services]]
+binding = "VALIDATOR_1_SERVICE"
+service = "blockchain-mvp-validator1"
+
+[[env.proposer.services]]
+binding = "VALIDATOR_2_SERVICE"
+service = "blockchain-mvp-validator2"
+
+# Added to fix inheritance warning
+[[env.proposer.services]]
+binding = "PROPOSER_SERVICE"
+service = "blockchain-mvp-proposer"
+
+[[env.proposer.durable_objects.bindings]]
+name = "CONSENSUS_COORDINATOR"
+class_name = "ConsensusCoordinator"
+script_name = "blockchain-mvp"
+
+[[env.proposer.kv_namespaces]]
+binding = "CONFIG_KV"
+id = "ba135706ad834c35b9f37c4d33416d39"
+
+[env.proposer.vars]
+NODE_ROLE = "proposer"
+NODE_ID = "node-0"
+VALIDATOR_URLS = '["https://blockchain-mvp-validator1.lovelylove.workers.dev", "https://blockchain-mvp-validator2.lovelylove.workers.dev"]'
+PROPOSER_PRIVATE_KEY = "0x80600bdc83df0a633693fa8babd17a99e3006c71a7b9c706ea33c9f80ed11133"
+NETWORK_ID = "cloudflare-mvp-testnet"
+CHAIN_ID = "1337"
+BLOCK_MAX_TXS = "20"
+BLOCK_MIN_TXS = "1"
+CONSENSUS_TIMEOUT_MS = "3000"
+ALARM_TIMEOUT_MS = "300000"
+PROPOSER_URL = "https://blockchain-mvp-proposer.lovelylove.workers.dev"
+VALIDATOR_1_URL = "https://blockchain-mvp-validator1.lovelylove.workers.dev"
+VALIDATOR_2_URL = "https://blockchain-mvp-validator2.lovelylove.workers.dev"
+FAUCET_KEY = "0x80600bdc83df0a633693fa8babd17a99e3006c71a7b9c706ea33c9f80ed11133"
+
+# Validator 1 Worker
+[env.validator1]
+name = "blockchain-mvp-validator1"
+main = "src/workers/validator.ts"
+migrations = []
+
+[[env.validator1.services]]
+binding = "PROPOSER_SERVICE"
+service = "blockchain-mvp-proposer"
+
+[[env.validator1.durable_objects.bindings]]
+name = "CONSENSUS_COORDINATOR"
+class_name = "ConsensusCoordinator"
+script_name = "blockchain-mvp"
+
+[[env.validator1.kv_namespaces]]
+binding = "CONFIG_KV"
+id = "ba135706ad834c35b9f37c4d33416d39"
+
+[env.validator1.vars]
+NODE_ROLE = "validator"
+NODE_ID = "node-1"
+VALIDATOR_INDEX = "0"
+VALIDATOR_PRIVATE_KEY = "0xd834c312f5242af62ad95aebe2a8b643cb813dd119b0425b1c8f56ddfc656953"
+NETWORK_ID = "cloudflare-mvp-testnet"
+CHAIN_ID = "1337"
+BLOCK_MAX_TXS = "20"
+BLOCK_MIN_TXS = "1"
+CONSENSUS_TIMEOUT_MS = "3000"
+ALARM_TIMEOUT_MS = "300000"
+PROPOSER_URL = "https://blockchain-mvp-proposer.lovelylove.workers.dev"
+VALIDATOR_1_URL = "https://blockchain-mvp-validator1.lovelylove.workers.dev"
+VALIDATOR_2_URL = "https://blockchain-mvp-validator2.lovelylove.workers.dev"
+FAUCET_KEY = "0x80600bdc83df0a633693fa8babd17a99e3006c71a7b9c706ea33c9f80ed11133"
+
+# Validator 2 Worker
+[env.validator2]
+name = "blockchain-mvp-validator2"
+main = "src/workers/validator.ts"
+migrations = []
+
+[[env.validator2.services]]
+binding = "PROPOSER_SERVICE"
+service = "blockchain-mvp-proposer"
+
+[[env.validator2.durable_objects.bindings]]
+name = "CONSENSUS_COORDINATOR"
+class_name = "ConsensusCoordinator"
+script_name = "blockchain-mvp"
+
+[[env.validator2.kv_namespaces]]
+binding = "CONFIG_KV"
+id = "ba135706ad834c35b9f37c4d33416d39"
+
+[env.validator2.vars]
+NODE_ROLE = "validator"
+NODE_ID = "node-2"
+VALIDATOR_INDEX = "1"
+VALIDATOR_PRIVATE_KEY = "0x0584cc0a287cfd187b97e931d487978f89d3539bcccd6758c49f3a08c25cac91"
+NETWORK_ID = "cloudflare-mvp-testnet"
+CHAIN_ID = "1337"
+BLOCK_MAX_TXS = "20"
+BLOCK_MIN_TXS = "1"
+CONSENSUS_TIMEOUT_MS = "3000"
+ALARM_TIMEOUT_MS = "300000"
+PROPOSER_URL = "https://blockchain-mvp-proposer.lovelylove.workers.dev"
+VALIDATOR_1_URL = "https://blockchain-mvp-validator1.lovelylove.workers.dev"
+VALIDATOR_2_URL = "https://blockchain-mvp-validator2.lovelylove.workers.dev"
+FAUCET_KEY = "0x80600bdc83df0a633693fa8babd17a99e3006c71a7b9c706ea33c9f80ed11133"
+
+# ============================================
+# 开发环境配置
+# ============================================
+[env.dev]
+name = "blockchain-mvp-dev"
+
+[[env.dev.durable_objects.bindings]]
+name = "CONSENSUS_COORDINATOR"
+class_name = "ConsensusCoordinator"
+
+[[env.dev.kv_namespaces]]
+binding = "CONFIG_KV"
+id = "dev-kv-namespace-id"
+preview_id = "dev-preview-kv-id"
+
+[env.dev.vars]
+NETWORK_ID = "cloudflare-mvp-devnet"
+CHAIN_ID = "13371337"
+BLOCK_MAX_TXS = "5"
+CONSENSUS_TIMEOUT_MS = "5000"
+ALARM_TIMEOUT_MS = "60000"
+
+# ============================================
+# 路由规则 - 基于路径的节点分发
+# ============================================
+# [[routes]]
+# pattern = "api.blockchain-mvp.workers.dev/*"
+# script = "blockchain-mvp"
+
+# [[routes]]
+# pattern = "proposer.blockchain-mvp.workers.dev/internal/*"
+# script = "blockchain-mvp-proposer"
+
+# [[routes]]
+# pattern = "validator1.blockchain-mvp.workers.dev/validate"
+# script = "blockchain-mvp-validator1"
+
+# [[routes]]
+# pattern = "validator2.blockchain-mvp.workers.dev/validate"
+# script = "blockchain-mvp-validator2"
+
+# ============================================
+# 日志和监控
+# ============================================
+[observability]
+enabled = true
+head_sampling_rate = 1.0
+
+# ============================================
+# 性能调优
+# ============================================
+
+
+
+
+# 构建配置已移除以加速本地调试

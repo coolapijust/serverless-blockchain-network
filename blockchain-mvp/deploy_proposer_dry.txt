@@ -1,0 +1,15 @@
+
+ 鉀咃笍 wrangler 3.114.17 (update available 4.61.1)
+-----------------------------------------------
+
+Total Upload: 9.24 KiB / gzip: 2.51 KiB
+Your worker has access to the following bindings:
+- Durable Objects:
+  - CONSENSUS_COORDINATOR: ConsensusCoordinator (defined in blockchain-mvp)
+- KV Namespaces:
+  - CONFIG_KV: 529391c4eaa54b9f82a404f844f3cfab
+- Vars:
+  - NODE_ROLE: "proposer"
+  - NODE_ID: "node-0"
+  - VALIDATOR_URLS: "["https://validator1.blockchain-mvp.w..."
+--dry-run: exiting now.

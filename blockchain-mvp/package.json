@@ -1,0 +1,52 @@
+{
+  "name": "cloudflare-blockchain-mvp",
+  "version": "1.0.0",
+  "description": "Event-driven serverless blockchain on Cloudflare edge computing",
+  "main": "src/workers/api.ts",
+  "scripts": {
+    "dev": "wrangler dev --env dev",
+    "deploy": "wrangler deploy --env production",
+    "deploy:proposer": "wrangler deploy --env proposer",
+    "deploy:validator1": "wrangler deploy --env validator1",
+    "deploy:validator2": "wrangler deploy --env validator2",
+    "deploy:all": "npm run deploy && npm run deploy:proposer && npm run deploy:validator1 && npm run deploy:validator2",
+    "tail": "wrangler tail --env production",
+    "tail:proposer": "wrangler tail --env proposer",
+    "tail:validator": "wrangler tail --env validator1",
+    "keys:generate": "node scripts/generate-keys.js",
+    "genesis:init": "node scripts/init-genesis.js",
+    "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
+    "build": "tsc",
+    "lint": "eslint src/**/*.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "blockchain",
+    "cloudflare",
+    "workers",
+    "durable-objects",
+    "bft-consensus",
+    "serverless"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20231218.0",
+    "@types/jest": "^29.5.11",
+    "@types/node": "^20.10.5",
+    "@typescript-eslint/eslint-plugin": "^6.16.0",
+    "@typescript-eslint/parser": "^6.16.0",
+    "eslint": "^8.56.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.3.3",
+    "wrangler": "^3.114.17"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^3.0.0",
+    "@noble/hashes": "^2.0.1"
+  }
+}
