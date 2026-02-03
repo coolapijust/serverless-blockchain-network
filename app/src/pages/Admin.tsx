@@ -14,7 +14,13 @@ import {
   AlertTriangle,
   CheckCircle,
   XCircle,
-  RefreshCw
+  RefreshCw,
+  Database,
+  History,
+  Clock,
+  ExternalLink,
+  ShieldCheck,
+  Package
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -92,6 +98,8 @@ export default function Admin() {
     networkHealth: 'healthy',
   });
   const [rawNetworkStatus, setRawNetworkStatus] = useState<any>(null);
+  const [backups, setBackups] = useState<{ cid: string; height: number; timestamp: number }[]>([]);
+  const [isBackingUp, setIsBackingUp] = useState(false);
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -116,9 +124,22 @@ export default function Admin() {
     };
 
     fetchStats();
-    const interval = setInterval(fetchStats, 5000);
+    fetchBackups();
+    const interval = setInterval(() => {
+      fetchStats();
+      fetchBackups();
+    }, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  const fetchBackups = async () => {
+    try {
+      const list = await api.getBackups();
+      setBackups(list);
+    } catch (error) {
+      console.error('Failed to fetch backups:', error);
+    }
+  };
 
   const handleLogin = (e: FormEvent) => {
     e.preventDefault();
@@ -145,6 +166,26 @@ export default function Admin() {
       }
     } catch (error) {
       toast.error('Error: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  };
+
+  const handleManualBackup = async () => {
+    setIsBackingUp(true);
+    try {
+      // api.fetch automatically unwraps 'data', so res IS the result object
+      const result = await api.triggerBackup() as unknown as { success: boolean; cid?: string; error?: string };
+
+      if (result.success) {
+        toast.success(t('admin.backupSuccess').replace('{cid}', result.cid || ''));
+        setTimeout(fetchBackups, 2000);
+      } else {
+        const errorMsg = result.error || 'Unknown error';
+        toast.error(t('admin.backupFailed').replace('{error}', errorMsg));
+      }
+    } catch (error) {
+      toast.error('Backup request failed: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setIsBackingUp(false);
     }
   };
 
@@ -228,9 +269,10 @@ export default function Admin() {
         </div>
 
         <Tabs defaultValue="validators" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-3 lg:w-[400px]">
+          <TabsList className="grid w-full grid-cols-4 lg:w-[500px]">
             <TabsTrigger value="validators">{t('admin.validators')}</TabsTrigger>
             <TabsTrigger value="network">Network</TabsTrigger>
+            <TabsTrigger value="backup">{t('admin.backup')}</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
 
@@ -319,6 +361,120 @@ export default function Admin() {
                 </CardContent>
               </Card>
             </div>
+          </TabsContent>
+
+          <TabsContent value="backup" className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold">{t('admin.backupList')}</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {t('admin.backupRotation')}
+                </p>
+              </div>
+              <Button
+                onClick={handleManualBackup}
+                disabled={isBackingUp}
+                className="bg-primary/90 hover:bg-primary"
+              >
+                {isBackingUp ? (
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Database className="h-4 w-4 mr-2" />
+                )}
+                {t('admin.backupManual')}
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Card className="bg-primary/5 border-primary/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-primary" />
+                    Encrypted Storage
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-xs text-muted-foreground">
+                    {t('admin.backupSecurity')}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="bg-blue-500/5 border-blue-500/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Package className="h-4 w-4 text-blue-500" />
+                    Storage Provider
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-xs text-muted-foreground">
+                    Pinata IPFS (Cloudflare Optimized)
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="bg-orange-500/5 border-orange-500/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-orange-500" />
+                    Backup Policy
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-xs text-muted-foreground">
+                    Event-driven + 90min Idle Auto-Backup
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card>
+              <CardContent className="p-0">
+                <div className="rounded-md border">
+                  <div className="grid grid-cols-12 gap-4 p-4 border-b bg-muted/50 font-medium text-sm">
+                    <div className="col-span-1">{t('explorer.height')}</div>
+                    <div className="col-span-6">{t('admin.backupCid')}</div>
+                    <div className="col-span-3">{t('admin.backupTime')}</div>
+                    <div className="col-span-2 text-right">Action</div>
+                  </div>
+                  {backups.length > 0 ? (
+                    <div className="divide-y text-sm">
+                      {backups.map((bk) => (
+                        <div key={bk.cid} className="grid grid-cols-12 gap-4 p-4 items-center hover:bg-muted/30 transition-colors">
+                          <div className="col-span-1 font-mono">
+                            {bk.height}
+                          </div>
+                          <div className="col-span-6 font-mono text-xs truncate flex items-center gap-2">
+                            <Box className="h-3 w-3 text-muted-foreground shrink-0" />
+                            <span className="truncate">{bk.cid}</span>
+                          </div>
+                          <div className="col-span-3 text-muted-foreground">
+                            {new Date(bk.timestamp).toLocaleString()}
+                          </div>
+                          <div className="col-span-2 text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 text-primary hover:text-primary hover:bg-primary/10"
+                              asChild
+                            >
+                              <a href={`https://gateway.pinata.cloud/ipfs/${bk.cid}`} target="_blank" rel="noopener noreferrer">
+                                <ExternalLink className="h-3.5 w-3.5 mr-1" />
+                                View
+                              </a>
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-12 text-center text-muted-foreground bg-muted/10">
+                      <History className="h-12 w-12 mx-auto mb-4 opacity-20" />
+                      <p>{t('common.noData')}</p>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="settings" className="space-y-4">

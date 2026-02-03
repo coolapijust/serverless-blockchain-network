@@ -324,6 +324,7 @@ export interface ConsensusCoordinatorState {
   pendingQueue: PendingQueue;
   blockHistory: Record<number, Block>;
   consensusConfig: ConsensusConfig;
+  lastBackupTime?: number; // 上次成功备份到 IPFS 的时间
 }
 
 /**
@@ -495,6 +496,9 @@ export interface ApiEnv {
   PROPOSER_URL: string;
   FAUCET_KEY: string;
   PROPOSER_SERVICE?: Fetcher;
+  // 备份相关 [NEW]
+  PINATA_JWT?: string;
+  BACKUP_ENCRYPTION_KEY?: string; // AES-256 密钥
 }
 
 /**

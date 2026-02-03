@@ -204,6 +204,17 @@ class ApiClient {
       body: JSON.stringify({ force }),
     });
   }
+
+  async getBackups(): Promise<{ cid: string; height: number; timestamp: number }[]> {
+    const res = await this.fetch<any>('/admin/backup-list');
+    return res.backups || [];
+  }
+
+  async triggerBackup(): Promise<{ success: boolean; message: string }> {
+    return this.fetch('/admin/trigger-backup', {
+      method: 'POST',
+    });
+  }
 }
 
 export const api = new ApiClient();

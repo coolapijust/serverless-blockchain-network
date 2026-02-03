@@ -35,6 +35,7 @@ import type {
   HexString,
   Address,
   BlockHash,
+  ApiEnv,
 } from '../types';
 
 import {
@@ -106,6 +107,7 @@ export class ConsensusCoordinator {
   private pendingQueue: PendingQueue | null = null;
   private blockHistory: Map<number, Block> = new Map();
   private consensusConfig: ConsensusConfig = DEFAULT_CONSENSUS_CONFIG;
+  private lastBackupTime: number = 0;
 
   constructor(state: DurableObjectState, env: unknown) {
     this.state = state;
@@ -126,14 +128,16 @@ export class ConsensusCoordinator {
     if (stored) {
       this.worldState = stored.worldState;
       this.pendingQueue = stored.pendingQueue;
-      this.blockHistory = new Map(Object.entries(stored.blockHistory).map(([k, v]) => [parseInt(k), v]));
-      this.consensusConfig = stored.consensusConfig;
+      this.consensusConfig = stored.consensusConfig || DEFAULT_CONSENSUS_CONFIG;
+      this.lastBackupTime = stored.lastBackupTime || 0;
+      this.blockHistory = new Map(
+        Object.entries(stored.blockHistory).map(([h, b]) => [Number(h), b])
+      );
     } else {
-      // 首次创建，初始化状态
+      console.log('[ConsensusCoordinator] No stored state found, initializing from Genesis...');
       this.worldState = createInitialWorldState();
       this.pendingQueue = createInitialPendingQueue();
-
-      // 保存初始状态
+      this.lastBackupTime = 0;
       await this.persistState();
     }
   }
@@ -147,6 +151,7 @@ export class ConsensusCoordinator {
       pendingQueue: this.pendingQueue!,
       blockHistory: Object.fromEntries(this.blockHistory),
       consensusConfig: this.consensusConfig,
+      lastBackupTime: this.lastBackupTime,
     };
 
     await this.state.storage.put('state', state);
@@ -500,6 +505,17 @@ export class ConsensusCoordinator {
       // 取消 Alarm（如果设置了）
       await this.state.storage.deleteAlarm();
 
+      // --- 智能备份触发 [NEW] ---
+      const now = Date.now();
+      const backupInterval = 3600000; // 1 小时
+      if (now - this.lastBackupTime > backupInterval) {
+        console.log('[Consensus] Triggering opportunistic backup...');
+        this.state.waitUntil(this.performBackup());
+      }
+
+      // 设置收尾闹钟 (1.5 小时后)，确保空闲状态也被备份
+      await this.state.storage.setAlarm(now + backupInterval * 1.5);
+
       return { success: true };
     });
   }
@@ -526,27 +542,26 @@ export class ConsensusCoordinator {
 
   /**
    * Alarm 回调处理
-   * 关键：兜底机制，防止交易卡死
+   * 采用混合策略：收尾备份 + 锁重置
    */
   async alarm(): Promise<void> {
-    console.log('[ConsensusCoordinator] Alarm triggered - forcing block commit');
+    console.log('[ConsensusCoordinator] Alarm triggered...');
 
-    const queue = await this.getPendingQueue();
+    const now = Date.now();
 
-    // 检查是否有卡死的交易
-    if (queue.processing && queue.transactions.length > 0) {
-      // 重置锁，让新的提议可以尝试
-      await this.releaseProcessingLock(false);
-
-      // 触发新的提议（通过 HTTP 唤醒 Proposer）
-      // 这里返回一个标记，由 fetch 处理
+    // 1. 检查是否需要收尾备份 (Idle Backup)
+    if (now - this.lastBackupTime > 3600000) {
+      console.log('[Consensus] Alarm: Triggering idle backup...');
+      this.state.waitUntil(this.performBackup());
     }
 
-    // 如果有待处理交易但未在处理中，尝试打包
-    if (!queue.processing && queue.transactions.length > 0) {
-      // 返回标记，由 fetch 处理唤醒
+    // 2. 释放可能卡住的处理锁 (Existing logic)
+    if (this.pendingQueue && this.pendingQueue.processing) {
+      console.warn('[ConsensusCoordinator] Processing timeout, releasing lock via alarm');
+      await this.releaseProcessingLock(false); // 不清空队列，允许重试
     }
   }
+
 
   // ============================================
   // 区块打包（Proposer 调用）
@@ -1036,6 +1051,67 @@ export class ConsensusCoordinator {
         return safeJsonResponse({ success: true });
       }
 
+      // --- 备份相关接口 [NEW] ---
+
+      // 获取备份列表
+      if (path === '/internal/backup-list' && request.method === 'GET') {
+        const indexStr = await this.apiEnv.CONFIG_KV.get('backup_index');
+        const index = JSON.parse(indexStr || '[]');
+        return safeJsonResponse({ backups: index });
+      }
+
+
+      // 手动触发备份
+      if (path === '/internal/trigger-backup' && request.method === 'POST') {
+        const result = await this.performBackup();
+        return safeJsonResponse(result);
+      }
+
+      // 恢复状态
+      if (path === '/internal/restore' && request.method === 'POST') {
+        const { state, cid, force } = await request.json() as { state: any; cid: string; force?: boolean };
+
+        // 1. 安全检查：必须提供 CID
+        if (!cid) {
+          return safeJsonResponse({ success: false, error: 'CID is required for verification' }, 400);
+        }
+
+        // 2. 验证 CID 是否为已记录的最新的备份
+        const indexStr = await this.apiEnv.CONFIG_KV.get('backup_index');
+        const index = JSON.parse(indexStr || '[]') as Array<{ cid: string, height: number, timestamp: number }>;
+
+        if (index.length === 0) {
+          return safeJsonResponse({ success: false, error: 'No backup records found in index' }, 400);
+        }
+
+        if (index[0].cid !== cid) {
+          return safeJsonResponse({
+            success: false,
+            error: `CID mismatch. Provided: ${cid}, Latest recorded: ${index[0].cid}`
+          }, 403);
+        }
+
+        // 3. 链状态检查
+        if (this.worldState && this.worldState.latestBlockHeight > 0 && !force) {
+          return safeJsonResponse({ success: false, error: 'Cannot restore to a live chain without force=true' }, 403);
+        }
+
+        // 4. BigInt 还原并应用
+        const restoredState = this.restoreBigInts(state);
+
+        await this.state.storage.put('state', restoredState);
+
+        // 更新内存
+        this.worldState = restoredState.worldState;
+        this.pendingQueue = restoredState.pendingQueue;
+        this.lastBackupTime = restoredState.lastBackupTime || 0;
+        this.blockHistory = new Map(
+          Object.entries(restoredState.blockHistory).map(([h, b]) => [Number(h), b as Block])
+        );
+
+        return safeJsonResponse({ success: true, message: 'State restored successfully' });
+      }
+
       return safeJsonResponse({ error: 'Not found' }, 404);
     } catch (error) {
       console.error('[ConsensusCoordinator] Error:', error);
@@ -1043,6 +1119,223 @@ export class ConsensusCoordinator {
         error: error instanceof Error ? error.message : 'Unknown error'
       }, 500);
     }
+  }
+
+  // ============================================
+  // 备份与恢复辅助函数 [NEW]
+  // ============================================
+
+  private get apiEnv(): ApiEnv {
+    return this.env as ApiEnv;
+  }
+
+  /**
+   * 执行自动化备份
+   */
+  private async performBackup(): Promise<{ success: boolean; cid?: string; error?: string; height?: number }> {
+    const now = Date.now();
+    console.log(`[Consensus] Starting backup at ${new Date(now).toISOString()}...`);
+
+    try {
+      const state = await this.state.storage.get<ConsensusCoordinatorState>('state');
+      if (!state) return { success: false, error: 'State not found in storage' };
+
+      const jsonData = JSON.stringify(state, (k, v) => typeof v === 'bigint' ? v.toString() : v);
+
+      // 1. 加密
+      const encryptionKey = this.apiEnv.BACKUP_ENCRYPTION_KEY;
+      let encryptedData: ArrayBuffer | Uint8Array;
+      let iv: Uint8Array;
+
+      if (encryptionKey) {
+        console.log(`[Consensus] Encrypting backup data (len: ${jsonData.length})...`);
+        const result = await this.encryptData(jsonData, encryptionKey);
+        encryptedData = result.encrypted;
+        iv = result.iv;
+      } else {
+        console.warn('[Consensus] No BACKUP_ENCRYPTION_KEY set, uploading unencrypted (Not recommended)');
+        encryptedData = new TextEncoder().encode(jsonData);
+        iv = new Uint8Array(0);
+      }
+
+      // 2. 上传到 Pinata
+      const jwt = this.apiEnv.PINATA_JWT;
+      if (!jwt) {
+        console.error('[Consensus] PINATA_JWT not found, backup aborted');
+        return { success: false, error: 'PINATA_JWT missing in env' };
+      }
+
+      const uploadResult = await this.uploadToPinata(iv, encryptedData, state.worldState.latestBlockHeight, jwt);
+      if (!uploadResult.success) {
+        return { success: false, error: `Pinata upload failed: ${uploadResult.error}` };
+      }
+
+      const cid = uploadResult.cid!;
+
+      // 3. 更新状态
+      this.lastBackupTime = now;
+      await this.state.storage.put('lastBackupTime', now);
+
+      state.lastBackupTime = now;
+      await this.state.storage.put('state', state);
+
+      // 4. 更新索引并清理 (TTL=10)
+      console.log(`[Consensus] Updating backup index in KV with CID: ${cid}...`);
+      await this.updateBackupIndex(cid, state.worldState.latestBlockHeight, now, jwt);
+
+      console.log(`[Consensus] Backup complete. CID: ${cid}`);
+      return { success: true, cid, height: state.worldState.latestBlockHeight };
+    } catch (error: any) {
+      console.error('[Consensus] Backup process failed:', error);
+      return { success: false, error: error.message || String(error) };
+    }
+  }
+
+  /**
+   * AES-GCM 加密
+   */
+  private async encryptData(data: string, hexKey: string): Promise<{ encrypted: ArrayBuffer, iv: Uint8Array }> {
+    const encoder = new TextEncoder();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+
+    // 将 16 进制密钥转为 CryptoKey
+    const keyBuf = new Uint8Array(hexKey.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
+    const key = await crypto.subtle.importKey(
+      'raw',
+      keyBuf,
+      { name: 'AES-GCM' },
+      false,
+      ['encrypt']
+    );
+
+    const encrypted = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      encoder.encode(data)
+    );
+
+    return { encrypted, iv };
+  }
+
+  /**
+ * 上传二进制到 Pinata
+ */
+  private async uploadToPinata(iv: Uint8Array, data: ArrayBuffer | Uint8Array, height: number, jwt: string): Promise<{ success: boolean; cid?: string; error?: string }> {
+    const formData = new FormData();
+
+    // 组合 IV + 密文
+    const combined = new Uint8Array(iv.length + data.byteLength);
+    combined.set(iv);
+    combined.set(new Uint8Array(data), iv.length);
+
+    formData.append('file', new Blob([combined]), `backup-block-${height}.bin`);
+
+    const metadata = JSON.stringify({
+      name: `Blockchain-Backup-H${height}`,
+      keyvalues: {
+        app: 'blockchain-mvp',
+        height: height.toString(),
+        timestamp: Date.now().toString()
+      }
+    });
+    formData.append('pinataMetadata', metadata);
+
+    try {
+      const response = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${jwt}` },
+        body: formData
+      });
+
+      if (!response.ok) {
+        const err = await response.text();
+        console.error(`[Pinata] Upload failed: ${response.status} ${err}`);
+        return { success: false, error: `${response.status} ${err}` };
+      }
+
+      const result = await response.json() as { IpfsHash: string };
+      return { success: true, cid: result.IpfsHash };
+    } catch (error: any) {
+      return { success: false, error: error.message || String(error) };
+    }
+  }
+
+  /**
+   * 更新备份索引并清理旧数据 (TTL=10)
+   */
+  private async updateBackupIndex(cid: string, height: number, timestamp: number, jwt: string): Promise<void> {
+    const kv = this.apiEnv.CONFIG_KV;
+    const indexStr = await kv.get('backup_index');
+    let index = JSON.parse(indexStr || '[]') as Array<{ cid: string, height: number, timestamp: number }>;
+
+    // 添加新记录
+    index.unshift({ cid, height, timestamp });
+
+    // 如果超过 10 条，清理最旧的
+    if (index.length > 10) {
+      const toDelete = index.slice(10);
+      index = index.slice(0, 10);
+
+      // 异步执行 Unpin
+      for (const item of toDelete) {
+        this.state.waitUntil(this.unpinFromPinata(item.cid, jwt));
+      }
+    }
+
+    await kv.put('backup_index', JSON.stringify(index));
+  }
+
+  /**
+   * 从 Pinata 中物理删除 (Unpin)
+   */
+  private async unpinFromPinata(cid: string, jwt: string): Promise<void> {
+    console.log(`[Pinata] Unpinning old backup: ${cid}...`);
+    const response = await fetch(`https://api.pinata.cloud/pinning/unpin/${cid}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${jwt}` }
+    });
+
+    if (!response.ok) {
+      console.warn(`[Pinata] Unpin failed for ${cid}: ${response.status}`);
+    } else {
+      console.log(`[Pinata] Unpin successful: ${cid}`);
+    }
+  }
+
+  /**
+   * 还原状态中的 BigInt 字段
+   */
+  private restoreBigInts(state: any): ConsensusCoordinatorState {
+    if (state.worldState && state.worldState.balances) {
+      for (const addr in state.worldState.balances) {
+        state.worldState.balances[addr] = BigInt(state.worldState.balances[addr]);
+      }
+    }
+
+    if (state.pendingQueue && state.pendingQueue.transactions) {
+      state.pendingQueue.transactions = state.pendingQueue.transactions.map((tx: any) => ({
+        ...tx,
+        amount: BigInt(tx.amount || '0'),
+        gasPrice: BigInt(tx.gasPrice || '0'),
+        gasLimit: BigInt(tx.gasLimit || '0')
+      }));
+    }
+
+    if (state.blockHistory) {
+      for (const h in state.blockHistory) {
+        const block = state.blockHistory[h];
+        if (block.transactions) {
+          block.transactions = block.transactions.map((tx: any) => ({
+            ...tx,
+            amount: BigInt(tx.amount || '0'),
+            gasPrice: BigInt(tx.gasPrice || '0'),
+            gasLimit: BigInt(tx.gasLimit || '0')
+          }));
+        }
+      }
+    }
+
+    return state as ConsensusCoordinatorState;
   }
 }
 

@@ -70,6 +70,32 @@ npm run build
 npx wrangler pages deploy dist --project-name serverless-blockchain-frontend
 ```
 
+## 🛡️ 备份与灾难恢复 (Backup & Disaster Recovery)
+
+本系统内置了基于 IPFS (Pinata) 的加密备份机制。
+
+### 配置
+必须在 Cloudflare Workers 中配置以下 Secrets：
+- `PINATA_JWT`: Pinata API 的 JWT 令牌。
+- `BACKUP_ENCRYPTION_KEY`: 64位十六进制 AES-256-GCM 密钥。
+
+### 自动备份
+- 系统每 10 个区块或每 90 分钟自动执行一次备份。
+- 备份采用 **TTL=10** 轮转策略，自动清理旧数据。
+
+### 灾难恢复 (Disaster Recovery)
+当数据完全丢失时，使用恢复脚本重置链状态：
+
+```bash
+# 语法
+node scripts/restore.js <CID> <ENCRYPTION_KEY>
+
+# 示例
+node scripts/restore.js QmHash... af17...26
+```
+
+> **注意**: 恢复操作会强制覆盖当前链的所有状态，且仅允许恢复 `backup_index` 中记录的最新的 CID。
+
 ### 4. 初始化与管理 (Genesis Management)
 
 区块链在部署后需要进行创世初始化。为了确保账本安全，项目实现了**不可篡改创世 (Immutable Genesis)** 逻辑：

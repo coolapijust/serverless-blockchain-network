@@ -132,6 +132,21 @@ export default {
         return handleNetworkStatus(env, requestId);
       }
 
+      // 获取备份列表 (Admin)
+      if (path === '/admin/backup-list' && request.method === 'GET') {
+        return handleBackupList(env, requestId);
+      }
+
+      // 手动触发备份 (Admin)
+      if (path === '/admin/trigger-backup' && request.method === 'POST') {
+        return handleTriggerBackup(env, requestId);
+      }
+
+      // 恢复备份 (Admin - Force Only)
+      if (path === '/admin/restore-backup' && request.method === 'POST') {
+        return handleRestoreBackup(env, request, requestId);
+      }
+
       // 获取测试代币（仅测试网）
       if (path === '/faucet' && request.method === 'POST') {
         return handleFaucet(request, env, requestId);
@@ -906,6 +921,110 @@ async function handleInitGenesis(
     return jsonResponse({
       success: false,
       error: error instanceof Error ? error.message : 'Init genesis failed',
+      requestId,
+    }, 500);
+  }
+}
+
+/**
+ * 处理获取备份列表
+ */
+async function handleBackupList(
+  env: ApiEnv,
+  requestId: string
+): Promise<Response> {
+  try {
+    const id = env.CONSENSUS_COORDINATOR.idFromName('consensus-coordinator');
+    const stub = env.CONSENSUS_COORDINATOR.get(id);
+
+    const response = await stub.fetch('http://do/internal/backup-list');
+    const result = await response.json();
+
+    return jsonResponse({
+      success: true,
+      data: result,
+      requestId,
+    });
+  } catch (error) {
+    return jsonResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to fetch backup list',
+      requestId,
+    }, 500);
+  }
+}
+
+/**
+ * 处理手动触发备份
+ */
+async function handleTriggerBackup(
+  env: ApiEnv,
+  requestId: string
+): Promise<Response> {
+  try {
+    const id = env.CONSENSUS_COORDINATOR.idFromName('consensus-coordinator');
+    const stub = env.CONSENSUS_COORDINATOR.get(id);
+
+    const response = await stub.fetch('http://do/internal/trigger-backup', {
+      method: 'POST'
+    });
+    const result = await response.json();
+
+    return jsonResponse({
+      success: true,
+      data: result,
+      requestId,
+    });
+  } catch (error) {
+    return jsonResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to trigger backup',
+      requestId,
+    }, 500);
+  }
+}
+
+/**
+ * 处理恢复备份
+ */
+async function handleRestoreBackup(
+  env: ApiEnv,
+  request: Request,
+  requestId: string
+): Promise<Response> {
+  try {
+    // 1. 读取请求体 (state + force)
+    const body = await request.json();
+
+    // 2. 调用 DO 恢复
+    const id = env.CONSENSUS_COORDINATOR.idFromName('consensus-coordinator');
+    const stub = env.CONSENSUS_COORDINATOR.get(id);
+
+    const response = await stub.fetch('http://do/internal/restore', {
+      method: 'POST',
+      body: JSON.stringify(body)
+    });
+
+    const result = await response.json() as { success: boolean, message?: string, error?: string };
+
+    // 3. 如果恢复失败 (如未开启 Force)，返回 403
+    if (!result.success) {
+      return jsonResponse({
+        success: false,
+        error: result.error || 'Restore failed',
+        requestId
+      }, 403);
+    }
+
+    return jsonResponse({
+      success: true,
+      data: result,
+      requestId,
+    });
+  } catch (error) {
+    return jsonResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Restore process failed',
       requestId,
     }, 500);
   }
